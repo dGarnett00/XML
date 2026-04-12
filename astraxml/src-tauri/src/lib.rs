@@ -6,6 +6,7 @@ pub mod commands;
 use std::sync::Mutex;
 use commands::DbState;
 use core::db::setup;
+use core::error::log::LogState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(DbState(Mutex::new(conn)))
+        .manage(LogState::new())
         .invoke_handler(tauri::generate_handler![
             commands::open_document,
             commands::get_nodes,
@@ -27,6 +29,11 @@ pub fn run() {
             commands::list_snapshots,
             commands::validate_document,
             commands::export_document,
+            commands::get_error_log,
+            commands::clear_error_log,
+            commands::export_error_log,
+            commands::log_ui_error,
+            commands::get_session_id,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

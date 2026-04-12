@@ -17,3 +17,13 @@
 .statusbar__loading { color: var(--accent-cyan); }
 .statusbar__error { color: var(--accent-red); }
 .statusbar__version { color: var(--text-muted); }
+.statusbar__errcount {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--accent-red);
+  font-size: 12px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.statusbar__errcount:hover { text-decoration: underline; }

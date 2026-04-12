@@ -1,14 +1,17 @@
 import { Toolbar } from './panels/Toolbar';
 import { StatusBar } from './panels/StatusBar';
 import { DetailPanel } from './panels/DetailPanel';
+import { ErrorLogPanel } from './panels/ErrorLogPanel';
 import { TableView } from './views/TableView';
 import { TreeView } from './views/TreeView';
 import { RawView } from './views/RawView';
 import { useAppStore } from './store/app';
+import { useErrorLog } from './hooks/useErrorLog';
 import './App.css';
 
 export default function App() {
   const { viewMode } = useAppStore();
+  useErrorLog();
 
   return (
     <div className="app">
@@ -23,6 +26,7 @@ export default function App() {
         <DetailPanel />
       </div>
 
+      <ErrorLogPanel />
       <StatusBar />
     </div>
   );

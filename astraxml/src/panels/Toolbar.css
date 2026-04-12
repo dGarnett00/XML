@@ -95,3 +95,23 @@
   font-weight: 600;
 }
 .toolbar__btn--accent:hover { opacity: 0.9; }
+
+.toolbar__log-btn {
+  padding: 6px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.toolbar__log-btn:hover        { border-color: var(--accent-blue); color: var(--text-primary); }
+.toolbar__log-btn--alert {
+  border-color: rgba(255, 77, 106, 0.6);
+  color: var(--accent-red);
+  background: rgba(255, 77, 106, 0.08);
+  font-weight: 600;
+}
+.toolbar__log-btn--alert:hover { border-color: var(--accent-red); }

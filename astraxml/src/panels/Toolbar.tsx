@@ -1,4 +1,5 @@
 import { useAppStore, ViewMode } from '../store/app';
+import { useErrorLogStore } from '../store/errorLog';
 import './Toolbar.css';
 
 // Tauri APIs are only available inside the desktop window, not in a browser.
@@ -23,8 +24,11 @@ const VIEW_MODES: { id: ViewMode; label: string }[] = [
 
 export function Toolbar() {
   const { viewMode, setViewMode, document, searchQuery, setSearchQuery } = useAppStore();
+  const toggleLog  = useErrorLogStore((s) => s.toggleVisible);
+  const errorCount = useErrorLogStore((s) => s.countAbove('error'));
 
   async function handleOpen() {
+    const store = useAppStore.getState();
     try {
       const { open } = await getTauriDialog();
       const invoke = await getTauriInvoke();
@@ -34,20 +38,23 @@ export function Toolbar() {
         filters: [{ name: 'XML Files', extensions: ['xml'] }],
       });
       if (!selected) return;
-      const path = typeof selected === 'string' ? selected : (selected as string[])[0];
+      const path = typeof selected === 'string' ? selected : (selected as any).path ?? String(selected);
+      store.setLoading(true);
+      store.setError(null);
       const result = await invoke<{ document: any; nodeCount: number }>('open_document', { path });
-      const store = useAppStore.getState();
       store.setDocument({
-        id: result.document.id,
-        path: result.document.path,
+        id:          result.document.id,
+        path:        result.document.path,
         displayName: result.document.display_name,
-        rootNodeId: result.document.root_node_id,
-        nodeCount: result.nodeCount,
+        rootNodeId:  result.document.root_node_id,
+        nodeCount:   result.nodeCount,
       });
       const nodes = await invoke<any[]>('get_nodes', { documentId: result.document.id });
       store.setNodes(nodes);
     } catch (e) {
-      useAppStore.getState().setError(String(e));
+      store.setError(String(e));
+    } finally {
+      store.setLoading(false);
     }
   }
 
@@ -117,6 +124,13 @@ export function Toolbar() {
         <button className="toolbar__btn" onClick={handleSave} disabled={!document}>Save</button>
         <button className="toolbar__btn" onClick={handleExport} disabled={!document}>Export</button>
         <button className="toolbar__btn toolbar__btn--accent">Bulk Edit</button>
+        <button
+          className={`toolbar__btn toolbar__log-btn${errorCount > 0 ? ' toolbar__log-btn--alert' : ''}`}
+          onClick={toggleLog}
+          title="Toggle error log"
+        >
+          {errorCount > 0 ? `⚠ ${errorCount}` : 'Log'}
+        </button>
       </div>
     </header>
   );

@@ -75,6 +75,22 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
             summary     TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS error_log (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            timestamp   TEXT NOT NULL,
+            severity    TEXT NOT NULL CHECK(severity IN ('debug','info','warn','error','fatal')),
+            category    TEXT NOT NULL,
+            source      TEXT NOT NULL,
+            message     TEXT NOT NULL,
+            detail      TEXT,
+            context     TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_errlog_session  ON error_log(session_id);
+        CREATE INDEX IF NOT EXISTS idx_errlog_severity ON error_log(severity);
+        CREATE INDEX IF NOT EXISTS idx_errlog_ts       ON error_log(timestamp);
+
         CREATE TABLE IF NOT EXISTS presets (
             id          TEXT PRIMARY KEY,
             name        TEXT NOT NULL,

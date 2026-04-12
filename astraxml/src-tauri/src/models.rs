@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +23,32 @@ pub enum NodeType {
     Attribute,
     Text,
     Comment,
+}
+
+impl FromSql for NodeType {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        match value.as_str()? {
+            "element" => Ok(NodeType::Element),
+            "attribute" => Ok(NodeType::Attribute),
+            "text" => Ok(NodeType::Text),
+            "comment" => Ok(NodeType::Comment),
+            other => Err(FromSqlError::Other(
+                format!("unknown NodeType: {other}").into(),
+            )),
+        }
+    }
+}
+
+impl ToSql for NodeType {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        let s = match self {
+            NodeType::Element => "element",
+            NodeType::Attribute => "attribute",
+            NodeType::Text => "text",
+            NodeType::Comment => "comment",
+        };
+        Ok(ToSqlOutput::from(s))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
