@@ -1,0 +1,231 @@
+1) Full Roadmap Diagram
+Mermaid
+gantt
+    title AstraXML Roadmap (Offline Futuristic XML Studio)
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b %d
+
+    section Phase 0: Foundation
+    Architecture & Offline Core     :done, p0a, 2026-04-12, 14d
+    Storage & Versioning            :done, p0b, 2026-04-12, 14d
+
+    section Phase 1: Core Editor
+    Multi-View Editor (Table/Tree/Raw) :active, p1a, 2026-04-26, 28d
+    Search, Filter, Inline Validation :active, p1b, 2026-04-26, 28d
+
+    section Phase 2: Advanced Editing
+    Bulk Operations & Rules Engine     :p2a, 2026-05-24, 28d
+    Presets & Macro Actions            :p2b, 2026-05-24, 28d
+
+    section Phase 3: Schema Intelligence
+    XSD/DTD Support & Autofix          :p3a, 2026-06-21, 28d
+    Semantic Grouping & Insights       :p3b, 2026-06-21, 28d
+
+    section Phase 4: Futuristic UX
+    Timeline & Replay UI               :p4a, 2026-07-19, 28d
+    Offline Smart Assist               :p4b, 2026-07-19, 28d
+
+    section Phase 5: Automation
+    Scripting + Macro Recorder         :p5a, 2026-08-16, 42d
+    Export Pipelines & Diffs           :p5b, 2026-08-16, 42d
+
+    section Phase 6: Reliability
+    Large XML Performance              :p6a, 2026-09-27, 21d
+    Recovery & Integrity Layer         :p6b, 2026-09-27, 21d
+
+    section Phase 7: Pro Modules
+    Visual Diff Studio                 :p7a, 2026-10-18, 28d
+    XML Maps & Cross-Ref Graph         :p7b, 2026-10-18, 28d
+2) UI Wireframes (ASCII)
+2.1 Main Editor (Table + Tree + Raw)
+Code
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ AstraXML  ▸ Types Editor                 [Offline]   Autosave: 4m           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ File ▸ Open  Save  Export  Presets  Tools  View  Help                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Search: [ ACOGOptic________________ ]  Filter: [Category ▾] [Tier ▾]         │
+│ Actions: +Add  Bulk Edit  Rule Engine  Validate  Diff  Timeline              │
+├───────────────────────┬───────────────────────────────────────┬─────────────┤
+│ Tree View            │ Table View                           │ Raw XML     │
+│ ┌──────────────────┐ │ ┌──────────────────────────────────┐ │ ┌──────────┐ │
+│ │ types.xml        │ │ │ Name   Nom  Min  Life  Cost ...  │ │ │ <types>  │ │
+│ │ ├─ weapons       │ │ │ ACOG   10   6   14400 100 ...     │ │ │  <type>  │ │
+│ │ ├─ clothes       │ │ │ AK101   2   1   28800 100 ...     │ │ │  ...     │ │
+│ │ └─ tools         │ │ │ ...                              │ │ │ </types> │ │
+│ └──────────────────┘ │ └──────────────────────────────────┘ │ └──────────┘ │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Selection Details:                                                            │
+│  Name: AK101 | Category: weapons | Tags: Military, Tier3                      │
+│  [Edit Attributes] [Add Tag] [Clone] [Delete] [History]                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+2.2 Bulk Edit / Rule Engine
+Code
+┌───────────────────────────────────────────────────  ───────────────────┐
+│ Bulk Edit / Rule Engine                                               │
+├───────────────────────────────────────────────────────────────────────┤
+│ IF  [Category] = [weapons]  AND  [Cost] > [50]                         │
+│ THEN SET [Cost] = [80]                                                 │
+│ THEN ADD TAG [Balanced]                                                │
+│                                                                       │
+│ Preview Changes: 137 items                                             │
+│ [Show Diff]  [Apply]  [Save Rule Preset]                               │
+└───────────────────────────────────────────────────────────────────────┘
+2.3 Timeline / Replay View
+Code
+┌───────────────────────────────────────────────────────────────────────┐
+│ Timeline: 2026-04-12 ▣─────▣─────▣─────▣  (drag to replay)             │
+├───────────────────────────────────────────────────────────────────────┤
+│ Change Log                                                             │
+│  • 09:12  Bulk edit Cost on 137 items                                  │
+│  • 09:05  Added tag "Balanced"                                         │
+│  • 08:57  Removed 20 deprecated nodes                                  │
+└───────────────────────────────────────────────────────────────────────┘
+3) Data Model Spec (Offline, Indexed, Versioned)
+3.1 Core Entities
+Document
+
+id (UUID)
+path (string)
+display_name (string)
+xml_version (string)
+encoding (string)
+root_node_id (UUID)
+created_at, updated_at
+last_opened_at
+schema_id (optional)
+XmlNode
+
+id (UUID)
+document_id (UUID)
+parent_id (UUID nullable)
+node_type (element | attribute | text | comment)
+name (string)
+value (string nullable)
+order_index (int)
+depth (int)
+Attribute
+
+id (UUID)
+node_id (UUID) // parent element
+name (string)
+value (string)
+IndexEntry
+
+id (UUID)
+document_id
+node_id
+name_hash
+value_hash
+path_string
+tags (string[])
+numeric_cache (float)
+Tag
+
+id (UUID)
+document_id
+node_id
+name (string)
+EditSnapshot
+
+id (UUID)
+document_id
+created_at
+diff_blob (binary or text)
+summary (string)
+Preset
+
+id (UUID)
+name (string)
+type (filter | bulk_edit | export | validation)
+payload (JSON)
+created_at
+Macro
+
+id (UUID)
+name (string)
+steps (JSON)
+created_at
+Schema
+
+id (UUID)
+document_id
+schema_type (XSD | DTD | inferred)
+raw_schema (text)
+3.2 Relationships
+Document 1→many XmlNode
+XmlNode 1→many Attribute
+XmlNode 1→many Tag
+Document 1→many EditSnapshot
+Document 1→many Preset
+Document 1→many Macro
+Document 1→0/1 Schema
+3.3 Index Strategy
+Name and value hashes for fast search
+Path and tag inverted index
+Numeric cache for quick range filters
+Background re-indexing on change
+4) Technical Design Doc (Concise Version)
+4.1 Objectives
+Offline XML editor with advanced bulk ops
+Handles very large XML files efficiently
+Intuitive UI with power features
+Local versioning + undo/redo
+4.2 Architecture Overview
+Layered system:
+
+UI Layer
+
+Table, Tree, Raw XML views
+Command palette
+Timeline & diff viewer
+Application Layer
+
+Document controller
+Search/filter engine
+Bulk edit rules engine
+Schema validation
+Data Layer
+
+XML parsing + streaming
+Indexed node store
+Local database (SQLite)
+Automation Layer
+
+Macro engine
+Scripting (Lua/JS)
+Offline assistant
+4.3 XML Engine
+Streaming parser to load huge XML without blocking UI
+Builds a node index and lightweight tree
+Lazy‑loads subtree content on expand
+Saves XML via incremental serializer
+4.4 Editing & Rules Engine
+Rule pipeline:
+Filter nodes
+Preview changes
+Apply transactional edits
+Index refresh
+Bulk operations are atomic for crash safety
+4.5 Storage & Versioning
+Each save produces a snapshot diff
+Timeline replays via diff chain
+Autosave every 5 minutes (configurable)
+File locking prevents corruption
+4.6 Performance Targets
+Load 2M+ nodes in under 10 seconds
+Search 100k nodes < 200ms
+Bulk edit 10k nodes < 2s
+UI stays responsive at all times
+4.7 Offline Smart Assist (Optional)
+Local inference engine (small model)
+Translates natural language → rule expressions
+Works without internet
+4.8 Extensibility
+Plugin API for new views and exporters
+Add new schema types
+Optional Pro modules
+4.9 Security
+No telemetry, no network
+Fully local file operations
+Encrypted project store optional

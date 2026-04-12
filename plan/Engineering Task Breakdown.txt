@@ -1,0 +1,62 @@
+4) Detailed Engineering Task Breakdown (2‑Week Sprints)
+Start Date: 2026‑04‑12
+Sprint Length: 2 weeks
+Total: 14 sprints (approx. 28 weeks)
+
+Sprint 1 (2026‑04‑12 → 2026‑04‑25)
+Repo setup, build pipeline
+Offline storage scaffolding
+XML parser POC
+UI shell (window, routing)
+Sprint 2 (2026‑04‑26 → 2026‑05‑09)
+Tree view rendering
+Table view prototype
+File open + drag/drop
+Sprint 3 (2026‑05‑10 → 2026‑05‑23)
+Search indexing (name/value)
+Filter builder
+Basic inline edits
+Sprint 4 (2026‑05‑24 → 2026‑06‑06)
+Bulk edit engine
+Preview / diff view
+Undo/redo stack v1
+Sprint 5 (2026‑06‑07 → 2026‑06‑20)
+Schema validation (XSD/DTD)
+Inline error list
+Auto‑fix suggestions
+Sprint 6 (2026‑06‑21 → 2026‑07‑04)
+Timeline service (diff snapshots)
+History UI
+Autosave + recovery
+Sprint 7 (2026‑07‑05 → 2026‑07‑18)
+Rule engine compiler
+Rule presets system
+Macro recorder v1
+Sprint 8 (2026‑07‑19 → 2026‑08‑01)
+Futuristic UI polish
+Command palette
+Keyboard navigation
+Sprint 9 (2026‑08‑02 → 2026‑08‑15)
+Export presets
+Normalized output
+XML formatter improvements
+Sprint 10 (2026‑08‑16 → 2026‑08‑29)
+Large file optimization
+Lazy rendering
+Index performance tuning
+Sprint 11 (2026‑08‑30 → 2026‑09‑12)
+Scripting runtime
+Macro playback
+Script sandbox
+Sprint 12 (2026‑09‑13 → 2026‑09‑26)
+Diff studio
+Side‑by‑side compare
+Merge conflict resolver
+Sprint 13 (2026‑09‑27 → 2026‑10‑10)
+Pro module hooks
+Plugin API
+Plugin security
+Sprint 14 (2026‑10‑11 → 2026‑10‑24)
+QA hardening
+Installer builds
+Release candidate

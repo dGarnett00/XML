@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0b1020"/>
+      <stop offset="100%" stop-color="#0a0f1a"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#55b4ff"/>
+      <stop offset="100%" stop-color="#7a5cff"/>
+    </linearGradient>
+    <style>
+      .title { font: 600 36px 'Inter', Arial; fill: #e6f1ff; }
+      .phase { font: 600 20px 'Inter', Arial; fill: #b8c7e6; }
+      .task  { font: 500 16px 'Inter', Arial; fill: #d6e3ff; }
+      .date  { font: 500 14px 'Inter', Arial; fill: #8aa1c4; }
+      .grid  { stroke: #1a2540; stroke-width: 1; }
+      .bar   { fill: url(#bar); rx: 10; }
+      .bar2  { fill: #2a3758; rx: 10; }
+    </style>
+  </defs>
+
+  <rect width="100%" height="100%" fill="url(#bg)"/>
+  <text x="60" y="70" class="title">AstraXML Roadmap (Offline Futuristic XML Studio)</text>
+
+  <!-- Grid -->
+  <g opacity="0.25">
+    <line x1="400" y1="120" x2="400" y2="1020" class="grid"/>
+    <line x1="700" y1="120" x2="700" y2="1020" class="grid"/>
+    <line x1="1000" y1="120" x2="1000" y2="1020" class="grid"/>
+    <line x1="1300" y1="120" x2="1300" y2="1020" class="grid"/>
+    <line x1="1600" y1="120" x2="1600" y2="1020" class="grid"/>
+  </g>
+
+  <text x="400" y="110" class="date">Apr</text>
+  <text x="700" y="110" class="date">May</text>
+  <text x="1000" y="110" class="date">Jun</text>
+  <text x="1300" y="110" class="date">Jul</text>
+  <text x="1600" y="110" class="date">Aug</text>
+
+  <!-- Phases -->
+  <text x="60" y="160" class="phase">Phase 0: Foundation</text>
+  <rect x="400" y="140" width="300" height="28" class="bar"/>
+
+  <text x="60" y="230" class="phase">Phase 1: Core Editor</text>
+  <rect x="700" y="210" width="300" height="28" class="bar"/>
+
+  <text x="60" y="300" class="phase">Phase 2: Advanced Editing</text>
+  <rect x="1000" y="280" width="300" height="28" class="bar"/>
+
+  <text x="60" y="370" class="phase">Phase 3: Schema Intelligence</text>
+  <rect x="1300" y="350" width="300" height="28" class="bar"/>
+
+  <text x="60" y="440" class="phase">Phase 4: Futuristic UX</text>
+  <rect x="1600" y="420" width="300" height="28" class="bar"/>
+
+  <text x="60" y="510" class="phase">Phase 5: Automation</text>
+  <rect x="400" y="490" width="500" height="28" class="bar2"/>
+
+  <text x="60" y="580" class="phase">Phase 6: Reliability</text>
+  <rect x="900" y="560" width="300" height="28" class="bar2"/>
+
+  <text x="60" y="650" class="phase">Phase 7: Pro Modules</text>
+  <rect x="1200" y="630" width="400" height="28" class="bar2"/>
+</svg>

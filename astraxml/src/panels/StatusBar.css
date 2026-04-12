@@ -1,0 +1,19 @@
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  height: 28px;
+  background: var(--bg-mid);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.statusbar__item { white-space: nowrap; }
+.statusbar__spacer { flex: 1; }
+.statusbar__offline { color: var(--accent-green); }
+.statusbar__selected { color: var(--accent-blue); }
+.statusbar__loading { color: var(--accent-cyan); }
+.statusbar__error { color: var(--accent-red); }
+.statusbar__version { color: var(--text-muted); }

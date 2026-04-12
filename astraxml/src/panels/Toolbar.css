@@ -1,0 +1,97 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  height: 52px;
+  background: var(--bg-mid);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.toolbar__brand { display: flex; align-items: center; gap: 8px; min-width: 160px; }
+
+.toolbar__logo {
+  font-size: 16px;
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+}
+
+.toolbar__file {
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar__badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: rgba(0, 229, 160, 0.15);
+  color: var(--accent-green);
+  border: 1px solid rgba(0, 229, 160, 0.3);
+  white-space: nowrap;
+}
+
+.toolbar__search { flex: 1; }
+
+.toolbar__input {
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.toolbar__input:focus { border-color: var(--accent-blue); box-shadow: var(--glow-blue); }
+.toolbar__input::placeholder { color: var(--text-muted); }
+
+.toolbar__views { display: flex; gap: 2px; }
+
+.toolbar__view-btn {
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.toolbar__view-btn:hover { border-color: var(--accent-blue); color: var(--text-primary); }
+.toolbar__view-btn.active {
+  background: rgba(85, 180, 255, 0.15);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.toolbar__actions { display: flex; gap: 6px; }
+
+.toolbar__btn {
+  padding: 6px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.toolbar__btn:hover { border-color: var(--accent-blue); }
+.toolbar__btn--accent {
+  background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+  border-color: transparent;
+  font-weight: 600;
+}
+.toolbar__btn--accent:hover { opacity: 0.9; }

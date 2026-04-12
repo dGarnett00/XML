@@ -1,0 +1,147 @@
+Phase 0 — Foundation (Weeks 1–2)
+Goal: Nail the architecture for performance, offline safety, and future extensibility.
+
+Deliverables
+
+Offline-first architecture (no external calls)
+Local state engine with autosave + versioning
+Data layer optimized for large XML (millions of nodes)
+Secure storage for presets, templates, and backups
+Plugin system scaffolding
+Key Decisions
+
+UI framework: Desktop native (Tauri/Qt/.NET/Swift)
+XML engine: streaming parser + in-memory indexed tree
+Storage: local database (SQLite) for indexes and history
+Phase 1 — Core Editor (Weeks 3–6)
+Goal: Build the essential XML editing environment.
+
+Core Features
+
+Split view: Raw XML ⇄ Smart table ⇄ Tree view
+Instant search across elements, attributes, and text nodes
+Fast filtering (by tag, attribute, regex, ranges)
+Inline validation with live error highlighting
+Undo/redo across sessions
+Crash recovery and auto-save timeline
+Intuitive UX
+
+Drag & drop XML files
+One-click “Enable Editing”
+Sticky header for column sorting
+Clean separation of content, attributes, and tags
+Phase 2 — Advanced Editing & Bulk Operations (Weeks 7–10)
+Goal: Make modifications powerful and effortless.
+
+Bulk Tools
+
+Multi-row edits (range, filter, selection)
+Rule-based edits (IF tag = X THEN set attr = Y)
+Attribute mass‑renaming and remapping
+Batch add/remove tags and attributes
+Merge/split nodes with conflict resolution
+Productivity
+
+Quick actions bar (Add/Clone/Delete/Promote)
+Preset operations (Save as “macros”)
+Column pinning + quick compare
+Phase 3 — Schema & Semantic Intelligence (Weeks 11–14)
+Goal: Make the XML “understood” by the editor.
+
+Capabilities
+
+XSD/DTD validation and autofix suggestions
+Tag/attribute autocomplete based on schema
+Semantic grouping (group items by tag usage)
+Highlight unused/invalid tags
+Visual Intelligence
+
+Node “heat map” for frequently touched data
+Inline tooltips with tag definition
+Phase 4 — Futuristic UX (Weeks 15–18)
+Goal: Deliver a modern, fluid, futuristic experience.
+
+Futuristic Features
+
+Natural language edits (offline LLM pack)
+Example: “Set all weapons with cost > 50 to 80”
+Timeline slider for edits and historical replay
+“Time‑lapse” preview of changes
+Command palette (Ctrl/Cmd + K)
+Visual UX
+
+Neon‑minimal UI theme + dark/light adaptive
+Animated node expansion and smart transitions
+Glass‑pane detail view for selected node
+Phase 5 — Automation & Scripting (Weeks 19–24)
+Goal: Make power users unstoppable.
+
+Automation
+
+Built‑in scripting language (Lua or JS)
+Macro recorder (records edits → reusable)
+Scheduled batch operations
+Offline import/export pipelines
+Outputs
+
+Export with presets: minified / pretty / normalized
+Versioned diff exports
+Phase 6 — Enterprise‑Grade Reliability (Weeks 25–28)
+Goal: Rock‑solid stability for huge XML files.
+
+Performance
+
+Index‑backed tree traversal
+Partial rendering for large datasets
+Background parsing for huge files
+Safety
+
+Atomic saves, auto rollback
+File locking & corruption detection
+Local snapshot backups
+Phase 7 — Optional “Pro” Modules (Weeks 29–36)
+Goal: Expand power without bloating core.
+
+Modules
+
+XML comparison studio (merge conflicts visually)
+Dataset explorer (charts based on attributes)
+XML templates & snippet packs
+XML to JSON/YAML converter
+Visual map of cross‑references
+Example Feature Set (Beyond Your Reference UI)
+✅ Multi‑View
+Table, Tree, Raw XML, and Visual Graph modes
+Toggle live between modes without losing context
+✅ Intelligent Bulk Editor
+Rule engine with chained operations
+“Preview Changes” before committing
+✅ Offline “Smart Assist”
+Lightweight local assistant for guidance
+Works entirely offline (no telemetry)
+✅ Auto‑schema Inference
+If no schema is provided, infer structure
+✅ AI‑Style Queries (Offline)
+“Show all items where Lifetime > 10,000”
+“Group by Category, then sort by Cost”
+Core Principles
+Offline Always
+No network needed. Everything happens locally.
+
+Blazing Fast
+Handles millions of nodes with smooth UI.
+
+Intuitive
+If it takes longer than 5 seconds to learn, it’s too complex.
+
+State‑of‑the‑Art
+Uses modern UX patterns, AI‑style queries, modular tooling.
+
+Futuristic
+Timeline editing, semantic intelligence, live previews.
+
+Suggested Tech Stack (Offline & Modern)
+UI: Tauri (Rust + Web UI) or .NET MAUI
+XML engine: Rust (quick-xml) or C# (System.Xml + custom index)
+Storage: SQLite for metadata + history snapshots
+Plugins: WebAssembly or Lua
