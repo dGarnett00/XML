@@ -3,6 +3,7 @@ use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Document {
     pub id: String,
     pub path: String,
@@ -65,6 +66,7 @@ pub struct XmlNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Attribute {
     pub id: String,
     pub node_id: String,
@@ -73,6 +75,7 @@ pub struct Attribute {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tag {
     pub id: String,
     pub document_id: String,
@@ -81,6 +84,7 @@ pub struct Tag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EditSnapshot {
     pub id: String,
     pub document_id: String,
@@ -99,6 +103,7 @@ pub enum PresetType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Preset {
     pub id: String,
     pub name: String,
@@ -108,6 +113,7 @@ pub struct Preset {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Macro {
     pub id: String,
     pub name: String,
@@ -124,6 +130,7 @@ pub enum SchemaType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Schema {
     pub id: String,
     pub document_id: String,
@@ -132,6 +139,7 @@ pub struct Schema {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexEntry {
     pub id: String,
     pub document_id: String,

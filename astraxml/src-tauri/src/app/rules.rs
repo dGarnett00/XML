@@ -14,6 +14,7 @@ pub enum FilterOp {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuleFilter {
     pub field: String,
     pub op: FilterOp,
@@ -31,6 +32,7 @@ pub enum ActionType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuleAction {
     pub action: ActionType,
     pub field: String,
@@ -38,12 +40,14 @@ pub struct RuleAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Rule {
     pub filters: Vec<RuleFilter>,
     pub actions: Vec<RuleAction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RulePreviewResult {
     pub affected_node_ids: Vec<String>,
     pub count: usize,

@@ -220,6 +220,95 @@ pub fn get_nodes(
     Ok(result)
 }
 
+// ── Attributes ────────────────────────────────────────────────────────────
+
+/// Return all attributes for every node in a document.
+#[tauri::command]
+pub fn get_attributes(
+    document_id: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<Attribute>, String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::get_attributes", Category::Db, &log, None, &app))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.id, a.node_id, a.name, a.value
+             FROM attributes a
+             JOIN xml_nodes n ON n.id = a.node_id
+             WHERE n.document_id = ?1",
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::get_attributes", Category::Db, &log, Some(&conn), &app))?;
+
+    let result: Vec<Attribute> = stmt
+        .query_map([&document_id], |row| {
+            Ok(Attribute {
+                id: row.get(0)?,
+                node_id: row.get(1)?,
+                name: row.get(2)?,
+                value: row.get(3)?,
+            })
+        })
+        .map_err(|e| log::push_str(e.to_string(), "commands::get_attributes", Category::Db, &log, Some(&conn), &app))?
+        .collect::<Result<_, _>>()
+        .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::get_attributes", Category::Db, &log, Some(&conn), &app))?;
+    Ok(result)
+}
+
+/// Update (or insert) a single attribute value on a node.
+#[tauri::command]
+pub fn set_attribute(
+    node_id: String,
+    attr_name: String,
+    attr_value: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::set_attribute", Category::Db, &log, None, &app))?;
+    conn.execute(
+        "UPDATE attributes SET value = ?1 WHERE node_id = ?2 AND name = ?3",
+        rusqlite::params![attr_value, node_id, attr_name],
+    )
+    .map_err(|e| log::push_str(e.to_string(), "commands::set_attribute", Category::Db, &log, Some(&conn), &app))?;
+    Ok(())
+}
+
+/// Update a child-element's text value for a given type node (e.g. nominal, min).
+#[tauri::command]
+pub fn set_child_value(
+    parent_id: String,
+    child_name: String,
+    child_value: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::set_child_value", Category::Db, &log, None, &app))?;
+
+    // Find the child node with this parent and name
+    let child_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM xml_nodes WHERE parent_id = ?1 AND name = ?2 LIMIT 1",
+            rusqlite::params![parent_id, child_name],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(cid) = child_id {
+        // Update the text child of that child node
+        conn.execute(
+            "UPDATE xml_nodes SET value = ?1 WHERE parent_id = ?2 AND node_type = 'text'",
+            rusqlite::params![child_value, cid],
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::set_child_value", Category::Db, &log, Some(&conn), &app))?;
+    }
+    Ok(())
+}
+
 // ── Error Log ─────────────────────────────────────────────────────────────
 
 /// Return up to `limit` log entries from the in-memory ring-buffer (newest first).

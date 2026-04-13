@@ -82,7 +82,7 @@ fn write_node(
                     .join("")
             });
 
-            if child_nodes.map_or(true, |c| c.is_empty()) {
+            if child_nodes.is_none_or(|c| c.is_empty()) {
                 // self-closing
                 out.push_str(&format!("{}<{}{}/>\n", pad, node.name, attr_str));
             } else {

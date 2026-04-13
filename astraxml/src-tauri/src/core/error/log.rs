@@ -1,24 +1,24 @@
-/// AstraXML — Structured in-process error and event log.
-///
-/// Architecture
-/// ────────────
-/// ┌──────────┐   push()   ┌──────────────────────────────────────────┐
-/// │ Any code │ ─────────► │ LogStore  (bounded ring-buffer, 1 000)   │
-/// └──────────┘            │   • in-memory  VecDeque<LogEntry>        │
-///                         │   • SQLite     error_log table            │
-///                         │   • Tauri IPC  "error:log" event          │
-///                         └──────────────────────────────────────────┘
-///
-/// Key design choices
-/// ──────────────────
-/// • **Infallible push** — DB writes and event emissions are fire-and-forget.
-///   A failure in the logging layer must *never* propagate to the caller.
-/// • **Bounded memory** — the ring-buffer evicts the oldest entry once full.
-///   Historical data is preserved in SQLite for the full session lifetime.
-/// • **Typed metadata** — every entry carries Severity + Category so the UI
-///   can filter without string parsing.
-/// • **Separate concerns** — `LogStore` owns memory, `persist` owns DB,
-///   `push` orchestrates all three sinks.
+//! AstraXML — Structured in-process error and event log.
+//!
+//! Architecture
+//! ────────────
+//! ┌──────────┐   push()   ┌──────────────────────────────────────────┐
+//! │ Any code │ ─────────► │ LogStore  (bounded ring-buffer, 1 000)   │
+//! └──────────┘            │   • in-memory  VecDeque<LogEntry>        │
+//!                         │   • SQLite     error_log table            │
+//!                         │   • Tauri IPC  "error:log" event          │
+//!                         └──────────────────────────────────────────┘
+//!
+//! Key design choices
+//! ──────────────────
+//! • **Infallible push** — DB writes and event emissions are fire-and-forget.
+//!   A failure in the logging layer must *never* propagate to the caller.
+//! • **Bounded memory** — the ring-buffer evicts the oldest entry once full.
+//!   Historical data is preserved in SQLite for the full session lifetime.
+//! • **Typed metadata** — every entry carries Severity + Category so the UI
+//!   can filter without string parsing.
+//! • **Separate concerns** — `LogStore` owns memory, `persist` owns DB,
+//!   `push` orchestrates all three sinks.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -196,8 +196,8 @@ impl LogStore {
             .iter()
             .rev()
             .filter(|e| {
-                severity.map_or(true, |s| e.severity == s)
-                    && category.map_or(true, |c| e.category == c)
+                severity.is_none_or(|s| e.severity == s)
+                    && category.is_none_or(|c| e.category == c)
             })
             .take(limit)
             .cloned()
@@ -314,6 +314,7 @@ pub fn push_err(
 ///
 /// Useful for recording successful milestones (e.g. "document opened") so the
 /// UI log provides a complete execution timeline, not just failures.
+#[allow(clippy::too_many_arguments)]
 pub fn push_event(
     severity: Severity,
     category: Category,

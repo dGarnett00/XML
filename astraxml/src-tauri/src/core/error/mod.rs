@@ -1,18 +1,18 @@
-/// AstraXML — Centralised application error type.
-///
-/// Every subsystem converts its errors into `AppError` before bubbling up to
-/// the command layer.  `AppError` carries `Severity` and `Category` metadata
-/// so the log system can store, stream, and surface events without any extra
-/// bookkeeping at the call site.
-///
-/// Layout
-/// ──────
-/// • [`Severity`] — how bad is this? (debug → info → warn → error → fatal)
-/// • [`Category`] — which subsystem produced it? (parse, db, io, …)
-/// • [`AppError`] — the actual error enum (thiserror-derived)
-/// • `From` impls — one-shot conversion from every third-party error type
-///
-/// The sibling `log` module consumes these types.
+//! AstraXML — Centralised application error type.
+//!
+//! Every subsystem converts its errors into `AppError` before bubbling up to
+//! the command layer.  `AppError` carries `Severity` and `Category` metadata
+//! so the log system can store, stream, and surface events without any extra
+//! bookkeeping at the call site.
+//!
+//! Layout
+//! ──────
+//! • [`Severity`] — how bad is this? (debug → info → warn → error → fatal)
+//! • [`Category`] — which subsystem produced it? (parse, db, io, …)
+//! • [`AppError`] — the actual error enum (thiserror-derived)
+//! • `From` impls — one-shot conversion from every third-party error type
+//!
+//! The sibling `log` module consumes these types.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

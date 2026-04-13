@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::models::XmlNode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchQuery {
     pub document_id: String,
     pub text: String,
@@ -15,6 +16,7 @@ pub struct SearchQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub node: XmlNode,
     pub match_field: String,

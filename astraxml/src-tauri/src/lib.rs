@@ -23,6 +23,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_document,
             commands::get_nodes,
+            commands::get_attributes,
+            commands::set_attribute,
+            commands::set_child_value,
             commands::search_nodes,
             commands::preview_rule,
             commands::apply_rule,
