@@ -52,6 +52,7 @@ impl ToSql for NodeType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct XmlNode {
     pub id: String,
     pub document_id: String,
