@@ -150,26 +150,18 @@ function bucketKey(ts: string): string {
 
 function updateBuckets(buckets: RateBucket[], entry: LogEntry): RateBucket[] {
   const key = bucketKey(entry.timestamp);
-  const arr = [...buckets];
-  const idx = arr.findIndex((b) => b.time === key);
+  const isErr  = SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error;
+  const isWarn = entry.severity === 'warn';
+  const idx = buckets.findIndex((b) => b.time === key);
 
-  if (idx >= 0) {
-    const b = { ...arr[idx] };
-    b.total++;
-    if (SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error) b.errors++;
-    if (entry.severity === 'warn') b.warnings++;
-    arr[idx] = b;
-  } else {
-    arr.push({
-      time: key,
-      total: 1,
-      errors: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error ? 1 : 0,
-      warnings: entry.severity === 'warn' ? 1 : 0,
-    });
-  }
+  const arr = idx >= 0
+    ? buckets.map((b, i) => i !== idx ? b : {
+        ...b, total: b.total + 1,
+        errors: b.errors + +isErr, warnings: b.warnings + +isWarn,
+      })
+    : [...buckets, { time: key, total: 1, errors: +isErr, warnings: +isWarn }];
 
-  while (arr.length > MAX_RATE_BUCKETS) arr.shift();
-  return arr;
+  return arr.length > MAX_RATE_BUCKETS ? arr.slice(-MAX_RATE_BUCKETS) : arr;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────
@@ -193,31 +185,18 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
   // ── Mutations ─────────────────────────────────────────────────────────
 
   push: (entry) =>
-    set((state) => {
-      const entries =
-        state.entries.length >= MAX_ENTRIES
-          ? [...state.entries.slice(1), entry]
-          : [...state.entries, entry];
-      return {
-        entries,
-        rateBuckets: updateBuckets(state.rateBuckets, entry),
-        newEntryPulse: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error
-          ? entry.severity
-          : state.newEntryPulse,
-      };
-    }),
+    set((state) => ({
+      entries: [...state.entries.slice(-(MAX_ENTRIES - 1)), entry],
+      rateBuckets: updateBuckets(state.rateBuckets, entry),
+      newEntryPulse: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error
+        ? entry.severity : state.newEntryPulse,
+    })),
 
   pushBatch: (batch) =>
-    set((state) => {
-      let arr = [...state.entries];
-      let buckets = [...state.rateBuckets];
-      for (const entry of batch) {
-        if (arr.length >= MAX_ENTRIES) arr.shift();
-        arr.push(entry);
-        buckets = updateBuckets(buckets, entry);
-      }
-      return { entries: arr, rateBuckets: buckets };
-    }),
+    set((state) => ({
+      entries: [...state.entries, ...batch].slice(-MAX_ENTRIES),
+      rateBuckets: batch.reduce(updateBuckets, state.rateBuckets),
+    })),
 
   clear: () => set({ entries: [], rateBuckets: [], pinnedIds: new Set() }),
 
@@ -253,12 +232,8 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
       if (tagFilter.length > 0 && !tagFilter.some((t) => e.tags.includes(t))) return false;
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        const haystack =
-          e.message.toLowerCase() + ' ' +
-          e.source.toLowerCase() + ' ' +
-          (e.detail ?? '').toLowerCase() + ' ' +
-          e.tags.join(' ').toLowerCase();
-        if (!haystack.includes(q)) return false;
+        if (![e.message, e.source, e.detail ?? '', ...e.tags]
+              .some((s) => s.toLowerCase().includes(q))) return false;
       }
       return true;
     });
@@ -311,21 +286,11 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
   countAbove: (min) =>
     get().entries.filter((e) => SEVERITY_RANK[e.severity] >= SEVERITY_RANK[min]).length,
 
-  allTags: () => {
-    const tagSet = new Set<string>();
-    for (const e of get().entries) {
-      for (const t of e.tags) tagSet.add(t);
-    }
-    return Array.from(tagSet).sort();
-  },
+  allTags: () =>
+    [...new Set(get().entries.flatMap((e) => e.tags))].sort(),
 
-  allTraceIds: () => {
-    const ids = new Set<string>();
-    for (const e of get().entries) {
-      if (e.traceId) ids.add(e.traceId);
-    }
-    return Array.from(ids);
-  },
+  allTraceIds: () =>
+    [...new Set(get().entries.map((e) => e.traceId).filter(Boolean) as string[])],
 
   currentRate: () => {
     const { rateBuckets } = get();

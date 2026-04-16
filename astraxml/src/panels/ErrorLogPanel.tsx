@@ -77,11 +77,11 @@ import { isTauri } from '../lib/tauri';
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function relativeTime(iso: string): string {
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (diff < 5)      return 'just now';
-  if (diff <     60) return `${diff}s ago`;
-  if (diff <   3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`;
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 5)     return 'just now';
+  if (s < 60)    return `${s}s ago`;
+  if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(iso).toLocaleDateString();
 }
 
@@ -101,45 +101,38 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function copyEntry(entry: LogEntry): void {
+function copyEntry(e: LogEntry): void {
   const lines = [
-    `[${entry.severity.toUpperCase()}] ${entry.timestamp}`,
-    `Source:  ${entry.source}`,
-    `Message: ${entry.message}`,
-  ];
-  if (entry.traceId) lines.push(`Trace:   ${entry.traceId}`);
-  if (entry.durationMs != null) lines.push(`Duration: ${formatDuration(entry.durationMs)}`);
-  if (entry.detail) lines.push('', 'Detail:', entry.detail);
-  if (entry.tags.length > 0) lines.push(`Tags: ${entry.tags.join(', ')}`);
-  if (Object.keys(entry.context).length > 0) {
-    lines.push('', 'Context:');
-    for (const [k, v] of Object.entries(entry.context)) {
-      lines.push(`  ${k}: ${v}`);
-    }
-  }
-  if (entry.breadcrumbs.length > 0) {
-    lines.push('', 'Breadcrumbs:');
-    for (const bc of entry.breadcrumbs) {
-      lines.push(`  ${bc.timestamp} — ${bc.label}${bc.data ? ` (${bc.data})` : ''}`);
-    }
-  }
-  navigator.clipboard.writeText(lines.join('\n')).catch(() => undefined);
+    `[${e.severity.toUpperCase()}] ${e.timestamp}`,
+    `Source:  ${e.source}`,
+    `Message: ${e.message}`,
+    e.traceId && `Trace:   ${e.traceId}`,
+    e.durationMs != null && `Duration: ${formatDuration(e.durationMs)}`,
+    e.detail && `\nDetail:\n${e.detail}`,
+    e.tags.length && `Tags: ${e.tags.join(', ')}`,
+    Object.keys(e.context).length && ['', 'Context:',
+      ...Object.entries(e.context).map(([k, v]) => `  ${k}: ${v}`)].join('\n'),
+    e.breadcrumbs.length && ['', 'Breadcrumbs:',
+      ...e.breadcrumbs.map((b) => `  ${b.timestamp} — ${b.label}${b.data ? ` (${b.data})` : ''}`)].join('\n'),
+  ].filter(Boolean).join('\n');
+  navigator.clipboard.writeText(lines).catch(() => undefined);
 }
 
-function copyAsMarkdown(entry: LogEntry): void {
+function copyAsMarkdown(e: LogEntry): void {
+  const rows = [
+    `| Timestamp | \`${e.timestamp}\` |`,
+    `| Source | \`${e.source}\` |`,
+    `| Category | \`${e.category}\` |`,
+    e.traceId && `| Trace ID | \`${e.traceId}\` |`,
+    e.durationMs != null && `| Duration | \`${formatDuration(e.durationMs)}\` |`,
+  ].filter(Boolean).join('\n');
+
   const lines = [
-    `### \`[${entry.severity.toUpperCase()}]\` ${entry.message}`,
-    '',
-    `| Field | Value |`,
-    `|-------|-------|`,
-    `| Timestamp | \`${entry.timestamp}\` |`,
-    `| Source | \`${entry.source}\` |`,
-    `| Category | \`${entry.category}\` |`,
-  ];
-  if (entry.traceId) lines.push(`| Trace ID | \`${entry.traceId}\` |`);
-  if (entry.durationMs != null) lines.push(`| Duration | \`${formatDuration(entry.durationMs)}\` |`);
-  if (entry.detail) lines.push('', '```', entry.detail, '```');
-  navigator.clipboard.writeText(lines.join('\n')).catch(() => undefined);
+    `### \`[${e.severity.toUpperCase()}]\` ${e.message}`,
+    '', '| Field | Value |', '|-------|-------|', rows,
+    e.detail && `\n\`\`\`\n${e.detail}\n\`\`\``,
+  ].filter(Boolean).join('\n');
+  navigator.clipboard.writeText(lines).catch(() => undefined);
 }
 
 function downloadJson(entries: LogEntry[]): void {
@@ -700,9 +693,9 @@ function StatsView({ entries, rateBuckets }: {
       <div className="errlog__stats-section">
         <h4 className="errlog__stats-heading">Severity Breakdown</h4>
         <div className="errlog__stats-bars">
-          {(Object.entries(sevCounts) as [LogSeverity, number][]).map(([sev, count]) => {
+          {(() => {
             const max = Math.max(...Object.values(sevCounts), 1);
-            return (
+            return (Object.entries(sevCounts) as [LogSeverity, number][]).map(([sev, count]) => (
               <div key={sev} className="errlog__stats-bar-row">
                 <span className={`errlog__stats-label errlog__sev--${sev}`}>{sev}</span>
                 <div className="errlog__stats-bar-track">
@@ -713,8 +706,8 @@ function StatsView({ entries, rateBuckets }: {
                 </div>
                 <span className="errlog__stats-value">{count}</span>
               </div>
-            );
-          })}
+            ));
+          })()}
         </div>
       </div>
 

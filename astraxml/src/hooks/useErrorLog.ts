@@ -29,6 +29,28 @@ function uiFingerprint(source: string, message: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
+/** Build a UI-originated log entry with sensible defaults. */
+function uiEntry(source: string, message: string, tag: string, detail?: string | null): LogEntry {
+  return {
+    id: crypto.randomUUID(),
+    sessionId: useErrorLogStore.getState().sessionId || 'ui',
+    timestamp: new Date().toISOString(),
+    severity: 'error', category: 'ui', source, message,
+    detail: detail ?? null, context: {},
+    traceId: null, spanId: null, durationMs: null,
+    fingerprint: uiFingerprint(source, message),
+    tags: [tag], breadcrumbs: [], seq: 0,
+  };
+}
+
+/** Ensure optional v2 fields from backend payloads have defaults. */
+const withDefaults = (p: LogEntry): LogEntry => ({
+  ...p,
+  traceId: p.traceId ?? null,  spanId: p.spanId ?? null,
+  durationMs: p.durationMs ?? null, fingerprint: p.fingerprint ?? null,
+  tags: p.tags ?? [],  breadcrumbs: p.breadcrumbs ?? [],  seq: p.seq ?? 0,
+});
+
 export function useErrorLog(): void {
   const push       = useErrorLogStore((s) => s.push);
   const setSession = useErrorLogStore((s) => s.setSessionId);
@@ -46,24 +68,8 @@ export function useErrorLog(): void {
           const sessionId = await invoke<string>('get_session_id');
           setSession(sessionId);
 
-          unlisten = await listen<LogEntry>('error:log', (event) => {
-            // Backend entries arrive with all v2 fields pre-populated.
-            // Ensure defaults for any missing optional fields.
-            const entry: LogEntry = {
-              ...event.payload,
-              traceId:     event.payload.traceId     ?? null,
-              spanId:      event.payload.spanId       ?? null,
-              durationMs:  event.payload.durationMs   ?? null,
-              fingerprint: event.payload.fingerprint  ?? null,
-              tags:        event.payload.tags         ?? [],
-              breadcrumbs: event.payload.breadcrumbs  ?? [],
-              seq:         event.payload.seq          ?? 0,
-            };
-            push(entry);
-          });
-        } catch {
-          // Tauri APIs unavailable (browser dev mode) — silently ignore.
-        }
+          unlisten = await listen<LogEntry>('error:log', (e) => push(withDefaults(e.payload)));
+        } catch { /* Tauri unavailable (browser dev mode) */ }
       })();
     }
 
@@ -71,53 +77,16 @@ export function useErrorLog(): void {
     const prevOnError = window.onerror;
     window.onerror = (msg, src, line, col, err) => {
       const source = src ? `${src}:${line ?? 0}:${col ?? 0}` : 'window';
-      const message = typeof msg === 'string' ? msg : String(msg);
-      push({
-        id:          crypto.randomUUID(),
-        sessionId:   useErrorLogStore.getState().sessionId || 'ui',
-        timestamp:   new Date().toISOString(),
-        severity:    'error',
-        category:    'ui',
-        source,
-        message,
-        detail:      err?.stack ?? null,
-        context:     {},
-        traceId:     null,
-        spanId:      null,
-        durationMs:  null,
-        fingerprint: uiFingerprint(source, message),
-        tags:        ['js-error'],
-        breadcrumbs: [],
-        seq:         0,
-      });
-      if (typeof prevOnError === 'function') {
-        return prevOnError.call(window, msg, src, line, col, err);
-      }
-      return false;
+      push(uiEntry(source, typeof msg === 'string' ? msg : String(msg), 'js-error', err?.stack));
+      return typeof prevOnError === 'function'
+        ? prevOnError.call(window, msg, src, line, col, err)
+        : false;
     };
 
     // ── 3. Unhandled Promise rejection capture ────────────────────────
     const onUnhandledRejection = (ev: PromiseRejectionEvent) => {
       const reason = ev.reason as Error | null | undefined;
-      const message = reason?.message ?? String(ev.reason);
-      push({
-        id:          crypto.randomUUID(),
-        sessionId:   useErrorLogStore.getState().sessionId || 'ui',
-        timestamp:   new Date().toISOString(),
-        severity:    'error',
-        category:    'ui',
-        source:      'Promise',
-        message,
-        detail:      reason?.stack ?? null,
-        context:     {},
-        traceId:     null,
-        spanId:      null,
-        durationMs:  null,
-        fingerprint: uiFingerprint('Promise', message),
-        tags:        ['unhandled-rejection'],
-        breadcrumbs: [],
-        seq:         0,
-      });
+      push(uiEntry('Promise', reason?.message ?? String(ev.reason), 'unhandled-rejection', reason?.stack));
     };
     window.addEventListener('unhandledrejection', onUnhandledRejection);
 
