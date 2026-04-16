@@ -85,12 +85,21 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
             source      TEXT NOT NULL,
             message     TEXT NOT NULL,
             detail      TEXT,
-            context     TEXT NOT NULL DEFAULT '{}'
+            context     TEXT NOT NULL DEFAULT '{}',
+            trace_id    TEXT,
+            span_id     TEXT,
+            duration_ms REAL,
+            fingerprint TEXT,
+            tags        TEXT NOT NULL DEFAULT '[]',
+            breadcrumbs TEXT NOT NULL DEFAULT '[]',
+            seq         INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_errlog_session  ON error_log(session_id);
         CREATE INDEX IF NOT EXISTS idx_errlog_severity ON error_log(severity);
         CREATE INDEX IF NOT EXISTS idx_errlog_ts       ON error_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_errlog_trace    ON error_log(trace_id);
+        CREATE INDEX IF NOT EXISTS idx_errlog_fp       ON error_log(fingerprint);
 
         CREATE TABLE IF NOT EXISTS presets (
             id          TEXT PRIMARY KEY,

@@ -3,7 +3,7 @@
 //! Architecture
 //! ────────────
 //! ┌──────────┐   push()   ┌──────────────────────────────────────────┐
-//! │ Any code │ ─────────► │ LogStore  (bounded ring-buffer, 1 000)   │
+//! │ Any code │ ─────────► │ LogStore  (bounded ring-buffer, 5 000)   │
 //! └──────────┘            │   • in-memory  VecDeque<LogEntry>        │
 //!                         │   • SQLite     error_log table            │
 //!                         │   • Tauri IPC  "error:log" event          │
@@ -19,8 +19,17 @@
 //!   can filter without string parsing.
 //! • **Separate concerns** — `LogStore` owns memory, `persist` owns DB,
 //!   `push` orchestrates all three sinks.
+//! • **Trace correlation** — every entry can carry a `trace_id` / `span_id`
+//!   so related events (e.g. one open_document flow) can be grouped.
+//! • **Performance timing** — optional `duration_ms` for profiling operations.
+//! • **Fingerprinting** — a hash of (category + source + message-template)
+//!   lets the UI group/deduplicate repeated events automatically.
+//! • **Breadcrumbs** — lightweight trail of recent actions for richer context.
+//! • **Tags** — flexible string tags for custom grouping and filtering.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
@@ -33,7 +42,23 @@ use super::{AppError, Category, Severity};
 
 /// Maximum entries kept in the in-memory ring-buffer.
 /// Older entries are dropped from memory but remain in SQLite.
-pub const MAX_RING_ENTRIES: usize = 1_000;
+pub const MAX_RING_ENTRIES: usize = 5_000;
+
+// ── Breadcrumb ────────────────────────────────────────────────────────────
+
+/// A lightweight trail entry recording a recent user/system action.
+/// Breadcrumbs are attached to log entries to provide a richer context trail
+/// that shows what happened leading up to an event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Breadcrumb {
+    /// ISO-8601 timestamp.
+    pub timestamp: String,
+    /// Short label, e.g. "file.open", "rule.apply", "ui.click".
+    pub label: String,
+    /// Optional extra data (e.g. file path, rule name).
+    pub data: Option<String>,
+}
 
 // ── LogEntry ─────────────────────────────────────────────────────────────
 
@@ -70,6 +95,38 @@ pub struct LogEntry {
 
     /// Arbitrary key-value context set at the call-site.
     pub context: HashMap<String, String>,
+
+    // ── New fields ────────────────────────────────────────────────────
+
+    /// Trace ID — groups all events that belong to a single logical operation
+    /// (e.g. one open→parse→load flow).  UUIDv4 or empty.
+    #[serde(default)]
+    pub trace_id: Option<String>,
+
+    /// Span ID — identifies a single step within a trace.
+    #[serde(default)]
+    pub span_id: Option<String>,
+
+    /// Wall-clock duration in milliseconds for timed operations.
+    #[serde(default)]
+    pub duration_ms: Option<f64>,
+
+    /// Fingerprint hash for deduplication/grouping of similar events.
+    /// Computed from (category, source, message_template).
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+
+    /// Flexible string tags for custom grouping and filtering.
+    #[serde(default)]
+    pub tags: Vec<String>,
+
+    /// Breadcrumb trail — recent actions leading up to this event.
+    #[serde(default)]
+    pub breadcrumbs: Vec<Breadcrumb>,
+
+    /// Monotonic sequence number within the session for guaranteed ordering.
+    #[serde(default)]
+    pub seq: u64,
 }
 
 impl LogEntry {
@@ -83,6 +140,9 @@ impl LogEntry {
         detail: Option<String>,
         context: HashMap<String, String>,
     ) -> Self {
+        let src = source.into();
+        let msg = message.into();
+        let fp  = compute_fingerprint(&category, &src, &msg);
         Self {
             id: Uuid::new_v4().to_string(),
             session_id: session_id.as_ref().to_owned(),
@@ -90,10 +150,17 @@ impl LogEntry {
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             severity,
             category,
-            source: source.into(),
-            message: message.into(),
+            source: src,
+            message: msg,
             detail,
             context,
+            trace_id: None,
+            span_id: None,
+            duration_ms: None,
+            fingerprint: Some(fp),
+            tags: Vec::new(),
+            breadcrumbs: Vec::new(),
+            seq: 0,
         }
     }
 
@@ -136,6 +203,48 @@ impl LogEntry {
             context,
         )
     }
+
+    /// Builder: attach a trace ID.
+    pub fn with_trace(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    /// Builder: attach a span ID.
+    pub fn with_span(mut self, span_id: impl Into<String>) -> Self {
+        self.span_id = Some(span_id.into());
+        self
+    }
+
+    /// Builder: attach timing.
+    pub fn with_duration(mut self, ms: f64) -> Self {
+        self.duration_ms = Some(ms);
+        self
+    }
+
+    /// Builder: attach tags.
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// Builder: attach breadcrumbs.
+    pub fn with_breadcrumbs(mut self, crumbs: Vec<Breadcrumb>) -> Self {
+        self.breadcrumbs = crumbs;
+        self
+    }
+}
+
+/// Compute a stable fingerprint for deduplication/grouping.
+/// Uses FNV-style hashing of (category, source, first 80 chars of message).
+fn compute_fingerprint(category: &Category, source: &str, message: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    category.to_string().hash(&mut hasher);
+    source.hash(&mut hasher);
+    // Truncate message to avoid hashing long stack traces
+    let truncated: String = message.chars().take(80).collect();
+    truncated.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 // ── LogStore ──────────────────────────────────────────────────────────────
@@ -150,7 +259,12 @@ pub struct LogStore {
     entries: VecDeque<LogEntry>,
     /// Monotonically increasing counter (includes evicted entries).
     total_pushed: u64,
+    /// Rolling breadcrumb trail (last N actions) attached to new entries.
+    breadcrumbs: VecDeque<Breadcrumb>,
 }
+
+/// Max breadcrumbs to keep in the rolling trail.
+const MAX_BREADCRUMBS: usize = 25;
 
 impl LogStore {
     pub fn new() -> Self {
@@ -158,16 +272,46 @@ impl LogStore {
             session_id: Uuid::new_v4().to_string(),
             entries: VecDeque::with_capacity(MAX_RING_ENTRIES),
             total_pushed: 0,
+            breadcrumbs: VecDeque::with_capacity(MAX_BREADCRUMBS),
         }
     }
 
+    /// Record a breadcrumb to the rolling trail.
+    pub fn add_breadcrumb(&mut self, label: impl Into<String>, data: Option<String>) {
+        if self.breadcrumbs.len() >= MAX_BREADCRUMBS {
+            self.breadcrumbs.pop_front();
+        }
+        self.breadcrumbs.push_back(Breadcrumb {
+            timestamp: Utc::now()
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            label: label.into(),
+            data,
+        });
+    }
+
+    /// Snapshot the current breadcrumb trail (clone).
+    pub fn breadcrumbs_snapshot(&self) -> Vec<Breadcrumb> {
+        self.breadcrumbs.iter().cloned().collect()
+    }
+
     /// Push one entry into the ring-buffer, evicting the oldest if full.
-    pub fn push(&mut self, entry: LogEntry) {
+    /// Automatically stamps the entry with the next sequence number and
+    /// attaches the current breadcrumb trail (if the entry has none).
+    pub fn push(&mut self, mut entry: LogEntry) {
+        self.total_pushed += 1;
+        entry.seq = self.total_pushed;
+
+        // Auto-attach breadcrumbs to error/fatal entries when none provided.
+        if entry.breadcrumbs.is_empty()
+            && (entry.severity >= Severity::Error)
+        {
+            entry.breadcrumbs = self.breadcrumbs_snapshot();
+        }
+
         if self.entries.len() >= MAX_RING_ENTRIES {
             self.entries.pop_front();
         }
         self.entries.push_back(entry);
-        self.total_pushed += 1;
     }
 
     /// Iterate over all buffered entries, oldest first.
@@ -232,6 +376,13 @@ impl LogState {
             .lock()
             .map(|s| s.session_id.clone())
             .unwrap_or_else(|_| "unknown".to_owned())
+    }
+
+    /// Record a breadcrumb to the rolling trail.
+    pub fn breadcrumb(&self, label: impl Into<String>, data: Option<String>) {
+        if let Ok(mut store) = self.0.lock() {
+            store.add_breadcrumb(label, data);
+        }
     }
 }
 
@@ -343,20 +494,31 @@ pub fn push_event(
 /// Insert one `LogEntry` into `error_log`.  Any DB error is swallowed.
 pub fn persist(conn: &Connection, entry: &LogEntry) {
     let ctx = serde_json::to_string(&entry.context).unwrap_or_else(|_| "{}".to_owned());
+    let tags_json = serde_json::to_string(&entry.tags).unwrap_or_else(|_| "[]".to_owned());
+    let crumbs_json = serde_json::to_string(&entry.breadcrumbs).unwrap_or_else(|_| "[]".to_owned());
     let _ = conn.execute(
         "INSERT OR IGNORE INTO error_log
-         (id, session_id, timestamp, severity, category, source, message, detail, context)
-         VALUES (:id, :sid, :ts, :sev, :cat, :src, :msg, :det, :ctx)",
+         (id, session_id, timestamp, severity, category, source, message, detail, context,
+          trace_id, span_id, duration_ms, fingerprint, tags, breadcrumbs, seq)
+         VALUES (:id, :sid, :ts, :sev, :cat, :src, :msg, :det, :ctx,
+                 :tid, :spid, :dur, :fp, :tags, :crumbs, :seq)",
         named_params! {
-            ":id":  &entry.id,
-            ":sid": &entry.session_id,
-            ":ts":  &entry.timestamp,
-            ":sev": entry.severity.to_string(),
-            ":cat": entry.category.to_string(),
-            ":src": &entry.source,
-            ":msg": &entry.message,
-            ":det": &entry.detail,
-            ":ctx": &ctx,
+            ":id":     &entry.id,
+            ":sid":    &entry.session_id,
+            ":ts":     &entry.timestamp,
+            ":sev":    entry.severity.to_string(),
+            ":cat":    entry.category.to_string(),
+            ":src":    &entry.source,
+            ":msg":    &entry.message,
+            ":det":    &entry.detail,
+            ":ctx":    &ctx,
+            ":tid":    &entry.trace_id,
+            ":spid":   &entry.span_id,
+            ":dur":    &entry.duration_ms,
+            ":fp":     &entry.fingerprint,
+            ":tags":   &tags_json,
+            ":crumbs": &crumbs_json,
+            ":seq":    &entry.seq,
         },
     );
 }
@@ -376,7 +538,8 @@ pub fn query_db(
     let lim     = limit as i64;
 
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, session_id, timestamp, severity, category, source, message, detail, context
+        "SELECT id, session_id, timestamp, severity, category, source, message, detail, context,
+                trace_id, span_id, duration_ms, fingerprint, tags, breadcrumbs, seq
          FROM error_log
          WHERE (:sev IS NULL OR severity  = :sev)
            AND (:cat IS NULL OR category  = :cat)
@@ -394,6 +557,10 @@ pub fn query_db(
                 serde_json::from_str(&ctx_raw).unwrap_or_default();
             let sev_s: String = row.get(3)?;
             let cat_s: String = row.get(4)?;
+            let tags_raw: String = row.get::<_, Option<String>>(13)?.unwrap_or_else(|| "[]".to_owned());
+            let tags: Vec<String> = serde_json::from_str(&tags_raw).unwrap_or_default();
+            let crumbs_raw: String = row.get::<_, Option<String>>(14)?.unwrap_or_else(|| "[]".to_owned());
+            let breadcrumbs: Vec<Breadcrumb> = serde_json::from_str(&crumbs_raw).unwrap_or_default();
             Ok(LogEntry {
                 id:         row.get(0)?,
                 session_id: row.get(1)?,
@@ -404,6 +571,13 @@ pub fn query_db(
                 message:    row.get(6)?,
                 detail:     row.get(7)?,
                 context,
+                trace_id:    row.get(9)?,
+                span_id:     row.get(10)?,
+                duration_ms: row.get(11)?,
+                fingerprint: row.get(12)?,
+                tags,
+                breadcrumbs,
+                seq:         row.get::<_, Option<u64>>(15)?.unwrap_or(0),
             })
         },
     );

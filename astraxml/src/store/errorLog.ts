@@ -1,20 +1,16 @@
 /**
- * AstraXML — Error Log Store
+ * AstraXML — Error Log Store  (v2 — Revolutionary Overhaul)
  *
- * A Zustand-powered bounded ring-buffer for structured log entries.
+ * A Zustand-powered bounded ring-buffer for structured log entries with:
  *
- * Architecture
- * ────────────
- * • LogEntry  — immutable event object matching the Rust `LogEntry` schema
- * • LogStore  — max-1 000 ring-buffer with filter + count helpers
- * • Severity / Category — string-literal union types (no enum overhead)
- *
- * The store is the single source of truth for the ErrorLogPanel.  All entries
- * originate from one of three capture paths:
- *
- *   1. Tauri `"error:log"` IPC event  → `push()`   (Rust backend errors)
- *   2. `window.onerror`               → `push()`   (unhandled JS exceptions)
- *   3. `unhandledrejection`            → `push()`   (unhandled Promise rejections)
+ *   • Trace correlation    — group entries by traceId
+ *   • Fingerprint grouping — auto-collapse repeated errors
+ *   • Performance timing   — track operation durations
+ *   • Breadcrumb trails    — action history attached to errors
+ *   • Pinned entries       — user-pinned for investigation
+ *   • Rate tracking        — errors/min, burst detection
+ *   • Multi-tab views      — List / Timeline / Grouped / Stats
+ *   • Advanced filtering   — tag-based, time-range, regex search
  */
 
 import { create } from 'zustand';
@@ -35,27 +31,57 @@ export type LogCategory =
   | 'ui'
   | 'unknown';
 
+export type LogTab = 'list' | 'timeline' | 'grouped' | 'stats';
+
+export interface Breadcrumb {
+  timestamp: string;
+  label: string;
+  data: string | null;
+}
+
 export interface LogEntry {
-  /** UUIDv4 unique to this event. */
   id: string;
-  /** Shared across all entries in the same backend session. */
   sessionId: string;
-  /** ISO-8601 timestamp with millisecond precision. */
   timestamp: string;
   severity: LogSeverity;
   category: LogCategory;
-  /** E.g. "editor::open_document" or "Promise" for UI rejections. */
   source: string;
-  /** Primary human-readable message. */
   message: string;
-  /** Extended detail or stack trace, if available. */
   detail: string | null;
-  /** Arbitrary key-value context supplied at the call site. */
   context: Record<string, string>;
+  // v2 fields
+  traceId: string | null;
+  spanId: string | null;
+  durationMs: number | null;
+  fingerprint: string | null;
+  tags: string[];
+  breadcrumbs: Breadcrumb[];
+  seq: number;
+}
+
+/** A grouped entry formed by collapsing entries with the same fingerprint. */
+export interface GroupedEntry {
+  fingerprint: string;
+  severity: LogSeverity;
+  category: LogCategory;
+  source: string;
+  message: string;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+  entries: LogEntry[];
+}
+
+/** A time-bucket for the rate sparkline. */
+export interface RateBucket {
+  time: string;
+  total: number;
+  errors: number;
+  warnings: number;
 }
 
 /** Numeric order for severity comparisons (higher = more severe). */
-const SEVERITY_RANK: Record<LogSeverity, number> = {
+export const SEVERITY_RANK: Record<LogSeverity, number> = {
   debug: 0,
   info:  1,
   warn:  2,
@@ -65,7 +91,8 @@ const SEVERITY_RANK: Record<LogSeverity, number> = {
 
 // ── Store shape ───────────────────────────────────────────────────────────
 
-const MAX_ENTRIES = 1_000;
+const MAX_ENTRIES = 5_000;
+const MAX_RATE_BUCKETS = 30;
 
 interface ErrorLogState {
   entries:        LogEntry[];
@@ -74,11 +101,19 @@ interface ErrorLogState {
   severityFilter: LogSeverity | 'all';
   categoryFilter: LogCategory | 'all';
   searchQuery:    string;
-  /** The backend session ID — populated via get_session_id on app start. */
   sessionId:      string;
+
+  // v2 state
+  activeTab:      LogTab;
+  pinnedIds:      Set<string>;
+  tagFilter:      string[];
+  traceFilter:    string | null;
+  rateBuckets:    RateBucket[];
+  newEntryPulse:  LogSeverity | null;
 
   // ── Mutations ─────────────────────────────────────────────────────────
   push:              (entry: LogEntry) => void;
+  pushBatch:         (entries: LogEntry[]) => void;
   clear:             () => void;
   toggleVisible:     () => void;
   setVisible:        (v: boolean) => void;
@@ -87,12 +122,54 @@ interface ErrorLogState {
   setCategoryFilter: (f: LogCategory | 'all') => void;
   setSearchQuery:    (q: string) => void;
   setAutoScroll:     (v: boolean) => void;
+  setActiveTab:      (tab: LogTab) => void;
+  togglePin:         (id: string) => void;
+  setTagFilter:      (tags: string[]) => void;
+  setTraceFilter:    (traceId: string | null) => void;
+  clearPulse:        () => void;
 
-  // ── Derived (call as functions to access latest state snapshot) ───────
+  // ── Derived ───────────────────────────────────────────────────────────
   filteredEntries: () => LogEntry[];
+  groupedEntries:  () => GroupedEntry[];
+  pinnedEntries:   () => LogEntry[];
+  traceEntries:    (traceId: string) => LogEntry[];
   countBySeverity: (sev: LogSeverity) => number;
-  /** Count of entries at or above the given minimum severity. */
   countAbove:      (min: LogSeverity) => number;
+  allTags:         () => string[];
+  allTraceIds:     () => string[];
+  currentRate:     () => { errorsPerMin: number; totalPerMin: number };
+}
+
+// ── Rate bucket helpers ───────────────────────────────────────────────────
+
+function bucketKey(ts: string): string {
+  const d = new Date(ts);
+  d.setSeconds(0, 0);
+  return d.toISOString();
+}
+
+function updateBuckets(buckets: RateBucket[], entry: LogEntry): RateBucket[] {
+  const key = bucketKey(entry.timestamp);
+  const arr = [...buckets];
+  const idx = arr.findIndex((b) => b.time === key);
+
+  if (idx >= 0) {
+    const b = { ...arr[idx] };
+    b.total++;
+    if (SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error) b.errors++;
+    if (entry.severity === 'warn') b.warnings++;
+    arr[idx] = b;
+  } else {
+    arr.push({
+      time: key,
+      total: 1,
+      errors: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error ? 1 : 0,
+      warnings: entry.severity === 'warn' ? 1 : 0,
+    });
+  }
+
+  while (arr.length > MAX_RATE_BUCKETS) arr.shift();
+  return arr;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────
@@ -106,6 +183,13 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
   searchQuery:    '',
   sessionId:      '',
 
+  activeTab:      'list',
+  pinnedIds:      new Set(),
+  tagFilter:      [],
+  traceFilter:    null,
+  rateBuckets:    [],
+  newEntryPulse:  null,
+
   // ── Mutations ─────────────────────────────────────────────────────────
 
   push: (entry) =>
@@ -114,10 +198,28 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
         state.entries.length >= MAX_ENTRIES
           ? [...state.entries.slice(1), entry]
           : [...state.entries, entry];
-      return { entries };
+      return {
+        entries,
+        rateBuckets: updateBuckets(state.rateBuckets, entry),
+        newEntryPulse: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error
+          ? entry.severity
+          : state.newEntryPulse,
+      };
     }),
 
-  clear: () => set({ entries: [] }),
+  pushBatch: (batch) =>
+    set((state) => {
+      let arr = [...state.entries];
+      let buckets = [...state.rateBuckets];
+      for (const entry of batch) {
+        if (arr.length >= MAX_ENTRIES) arr.shift();
+        arr.push(entry);
+        buckets = updateBuckets(buckets, entry);
+      }
+      return { entries: arr, rateBuckets: buckets };
+    }),
+
+  clear: () => set({ entries: [], rateBuckets: [], pinnedIds: new Set() }),
 
   toggleVisible: () => set((s) => ({ isVisible: !s.isVisible })),
   setVisible:    (v) => set({ isVisible: v }),
@@ -127,36 +229,108 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
   setCategoryFilter: (f) => set({ categoryFilter: f }),
   setSearchQuery:    (q) => set({ searchQuery: q }),
   setAutoScroll:     (v) => set({ autoScroll: v }),
+  setActiveTab:      (tab) => set({ activeTab: tab }),
+  setTagFilter:      (tags) => set({ tagFilter: tags }),
+  setTraceFilter:    (traceId) => set({ traceFilter: traceId }),
+  clearPulse:        () => set({ newEntryPulse: null }),
+
+  togglePin: (id) =>
+    set((state) => {
+      const next = new Set(state.pinnedIds);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return { pinnedIds: next };
+    }),
 
   // ── Derived ───────────────────────────────────────────────────────────
 
   filteredEntries: () => {
-    const { entries, severityFilter, categoryFilter, searchQuery } = get();
+    const { entries, severityFilter, categoryFilter, searchQuery, tagFilter, traceFilter } = get();
     return entries.filter((e) => {
-      if (
-        severityFilter !== 'all' &&
-        SEVERITY_RANK[e.severity] < SEVERITY_RANK[severityFilter]
-      )
+      if (severityFilter !== 'all' && SEVERITY_RANK[e.severity] < SEVERITY_RANK[severityFilter])
         return false;
       if (categoryFilter !== 'all' && e.category !== categoryFilter) return false;
+      if (traceFilter && e.traceId !== traceFilter) return false;
+      if (tagFilter.length > 0 && !tagFilter.some((t) => e.tags.includes(t))) return false;
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         const haystack =
-          e.message.toLowerCase() +
-          ' ' +
-          e.source.toLowerCase() +
-          ' ' +
-          (e.detail ?? '').toLowerCase();
+          e.message.toLowerCase() + ' ' +
+          e.source.toLowerCase() + ' ' +
+          (e.detail ?? '').toLowerCase() + ' ' +
+          e.tags.join(' ').toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
   },
 
+  groupedEntries: () => {
+    const filtered = get().filteredEntries();
+    const map = new Map<string, GroupedEntry>();
+    for (const e of filtered) {
+      const fp = e.fingerprint || e.id;
+      const existing = map.get(fp);
+      if (existing) {
+        existing.count++;
+        if (e.timestamp < existing.firstSeen) existing.firstSeen = e.timestamp;
+        if (e.timestamp > existing.lastSeen) existing.lastSeen = e.timestamp;
+        if (SEVERITY_RANK[e.severity] > SEVERITY_RANK[existing.severity]) {
+          existing.severity = e.severity;
+        }
+        existing.entries.push(e);
+      } else {
+        map.set(fp, {
+          fingerprint: fp,
+          severity: e.severity,
+          category: e.category,
+          source: e.source,
+          message: e.message,
+          count: 1,
+          firstSeen: e.timestamp,
+          lastSeen: e.timestamp,
+          entries: [e],
+        });
+      }
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime(),
+    );
+  },
+
+  pinnedEntries: () => {
+    const { entries, pinnedIds } = get();
+    return entries.filter((e) => pinnedIds.has(e.id));
+  },
+
+  traceEntries: (traceId) =>
+    get().entries.filter((e) => e.traceId === traceId),
+
   countBySeverity: (sev) =>
     get().entries.filter((e) => e.severity === sev).length,
 
   countAbove: (min) =>
-    get().entries.filter((e) => SEVERITY_RANK[e.severity] >= SEVERITY_RANK[min])
-      .length,
+    get().entries.filter((e) => SEVERITY_RANK[e.severity] >= SEVERITY_RANK[min]).length,
+
+  allTags: () => {
+    const tagSet = new Set<string>();
+    for (const e of get().entries) {
+      for (const t of e.tags) tagSet.add(t);
+    }
+    return Array.from(tagSet).sort();
+  },
+
+  allTraceIds: () => {
+    const ids = new Set<string>();
+    for (const e of get().entries) {
+      if (e.traceId) ids.add(e.traceId);
+    }
+    return Array.from(ids);
+  },
+
+  currentRate: () => {
+    const { rateBuckets } = get();
+    if (rateBuckets.length === 0) return { errorsPerMin: 0, totalPerMin: 0 };
+    const latest = rateBuckets[rateBuckets.length - 1];
+    return { errorsPerMin: latest.errors, totalPerMin: latest.total };
+  },
 }));

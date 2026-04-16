@@ -36,6 +36,7 @@ pub fn open_document(
 ) -> Result<OpenDocumentResponse, String> {
     let mut conn = state.0.lock()
         .map_err(|e| log::push_str(e.to_string(), "commands::open_document", Category::Db, &log, None, &app))?;
+    log.breadcrumb("file.open", Some(path.clone()));
     let result = editor::open_document(&mut conn, &path)
         .map_err(|e| log::push_str(e, "editor::open_document", Category::Io, &log, Some(&conn), &app))?;
     let node_count = result.nodes.len();
