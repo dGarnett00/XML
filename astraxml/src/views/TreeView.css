@@ -72,3 +72,25 @@
 }
 
 .tree-node__children { margin-left: 16px; }
+
+/* ── TreeView toolbar ──────────────────────────────────────────────── */
+
+.tree-view__toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.tree-view__toolbar-btn {
+  padding: 3px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.tree-view__toolbar-btn:hover { border-color: var(--accent-blue); color: var(--text-primary); }

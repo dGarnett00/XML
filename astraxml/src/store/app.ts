@@ -57,6 +57,9 @@ interface AppState {
   isLoading: boolean;
   error: string | null;
   filter: FilterCriteria;
+  isDirty: boolean;
+  clipboardNodeIds: string[];
+  multiSelectedIds: Set<string>;
 
   loadDocument: (doc: DocumentInfo, nodes: XmlNode[], attributes: XmlAttribute[]) => void;
   selectNode: (id: string | null) => void;
@@ -67,11 +70,17 @@ interface AppState {
   setFilter: (f: Partial<FilterCriteria>) => void;
   resetFilter: () => void;
   reset: () => void;
+  markClean: () => void;
+  setClipboard: (ids: string[]) => void;
+  setMultiSelected: (ids: Set<string>) => void;
 
   // CRUD helpers (mutate local state after successful backend calls)
   addNodes: (nodes: XmlNode[]) => void;
   removeNodes: (ids: string[]) => void;
   updateNodeLocal: (id: string, patch: Partial<XmlNode>) => void;
+  addAttributeLocal: (attr: XmlAttribute) => void;
+  updateAttributeLocal: (id: string, patch: Partial<XmlAttribute>) => void;
+  removeAttributeLocal: (id: string) => void;
 }
 
 const EMPTY_FILTER: FilterCriteria = { tag: '', attribute: '', value: '', mode: 'contains' };
@@ -86,8 +95,11 @@ export const useAppStore = create<AppState>((set) => ({
   isLoading: false,
   error: null,
   filter: { ...EMPTY_FILTER },
+  isDirty: false,
+  clipboardNodeIds: [],
+  multiSelectedIds: new Set<string>(),
 
-  loadDocument: (doc, nodes, attributes) => set({ document: doc, nodes, attributes, selectedNodeId: null }),
+  loadDocument: (doc, nodes, attributes) => set({ document: doc, nodes, attributes, selectedNodeId: null, isDirty: false }),
   selectNode: (id) => set({ selectedNodeId: id }),
   setViewMode: (mode) => set({ viewMode: mode }),
   setSearchQuery: (q) => set({ searchQuery: q }),
@@ -95,17 +107,35 @@ export const useAppStore = create<AppState>((set) => ({
   setError: (msg) => set({ error: msg }),
   setFilter: (f) => set((s) => ({ filter: { ...s.filter, ...f } })),
   resetFilter: () => set({ filter: { ...EMPTY_FILTER } }),
-  reset: () => set({ document: null, nodes: [], attributes: [], selectedNodeId: null, filter: { ...EMPTY_FILTER } }),
+  reset: () => set({ document: null, nodes: [], attributes: [], selectedNodeId: null, filter: { ...EMPTY_FILTER }, isDirty: false }),
+  markClean: () => set({ isDirty: false }),
+  setClipboard: (ids) => set({ clipboardNodeIds: ids }),
+  setMultiSelected: (ids) => set({ multiSelectedIds: ids }),
 
-  addNodes: (newNodes) => set((s) => ({ nodes: [...s.nodes, ...newNodes] })),
+  addNodes: (newNodes) => set((s) => ({ nodes: [...s.nodes, ...newNodes], isDirty: true })),
   removeNodes: (ids) => set((s) => {
     const idSet = new Set(ids);
     return {
       nodes: s.nodes.filter((n) => !idSet.has(n.id)),
+      attributes: s.attributes.filter((a) => !idSet.has(a.nodeId)),
       selectedNodeId: s.selectedNodeId && idSet.has(s.selectedNodeId) ? null : s.selectedNodeId,
+      isDirty: true,
     };
   }),
   updateNodeLocal: (id, patch) => set((s) => ({
     nodes: s.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
+    isDirty: true,
+  })),
+  addAttributeLocal: (attr) => set((s) => ({
+    attributes: [...s.attributes, attr],
+    isDirty: true,
+  })),
+  updateAttributeLocal: (id, patch) => set((s) => ({
+    attributes: s.attributes.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+    isDirty: true,
+  })),
+  removeAttributeLocal: (id) => set((s) => ({
+    attributes: s.attributes.filter((a) => a.id !== id),
+    isDirty: true,
   })),
 }));

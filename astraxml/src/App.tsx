@@ -9,12 +9,14 @@ const TreeView = lazy(() => import('./views/TreeView').then((m) => ({ default: m
 const RawView = lazy(() => import('./views/RawView').then((m) => ({ default: m.RawView })));
 import { useAppStore, OpenDocumentResult } from './store/app';
 import { useErrorLog } from './hooks/useErrorLog';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { invoke } from './lib/tauri';
 import './App.css';
 
 export default function App() {
   const viewMode = useAppStore((s) => s.viewMode);
   useErrorLog();
+  useKeyboardShortcuts();
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

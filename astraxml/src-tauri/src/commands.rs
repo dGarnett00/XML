@@ -282,14 +282,153 @@ pub fn set_attribute(
     state: State<'_, DbState>,
     log: State<'_, LogState>,
     app: tauri::AppHandle,
-) -> Result<(), String> {
+) -> Result<Attribute, String> {
     let conn = state.0.lock()
         .map_err(|e| log::push_str(e.to_string(), "commands::set_attribute", Category::Db, &log, None, &app))?;
+
+    // Check if attribute exists
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM attributes WHERE node_id = ?1 AND name = ?2",
+            rusqlite::params![node_id, attr_name],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let attr_id = if let Some(id) = existing_id {
+        conn.execute(
+            "UPDATE attributes SET value = ?1 WHERE id = ?2",
+            rusqlite::params![attr_value, id],
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::set_attribute", Category::Db, &log, Some(&conn), &app))?;
+        id
+    } else {
+        let new_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO attributes (id, node_id, name, value) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![new_id, node_id, attr_name, attr_value],
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::set_attribute", Category::Db, &log, Some(&conn), &app))?;
+        new_id
+    };
+
+    Ok(Attribute {
+        id: attr_id,
+        node_id,
+        name: attr_name,
+        value: attr_value,
+    })
+}
+
+/// Add a new attribute to a node. Returns the created attribute.
+#[tauri::command]
+pub fn add_attribute(
+    node_id: String,
+    attr_name: String,
+    attr_value: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<Attribute, String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::add_attribute", Category::Db, &log, None, &app))?;
+
+    // Check for duplicate
+    let exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM attributes WHERE node_id = ?1 AND name = ?2",
+            rusqlite::params![node_id, attr_name],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if exists {
+        return Err(format!("Attribute '{attr_name}' already exists on this node"));
+    }
+
+    let id = Uuid::new_v4().to_string();
     conn.execute(
-        "UPDATE attributes SET value = ?1 WHERE node_id = ?2 AND name = ?3",
-        rusqlite::params![attr_value, node_id, attr_name],
+        "INSERT INTO attributes (id, node_id, name, value) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![id, node_id, attr_name, attr_value],
     )
-    .map_err(|e| log::push_str(e.to_string(), "commands::set_attribute", Category::Db, &log, Some(&conn), &app))?;
+    .map_err(|e| log::push_str(e.to_string(), "commands::add_attribute", Category::Db, &log, Some(&conn), &app))?;
+
+    log::push_event(Severity::Info, Category::Command, "commands::add_attribute",
+        format!("Added attribute {attr_name} to node {node_id}"), None, HashMap::new(), &log, Some(&conn), &app);
+
+    Ok(Attribute {
+        id,
+        node_id,
+        name: attr_name,
+        value: attr_value,
+    })
+}
+
+/// Delete an attribute by its ID.
+#[tauri::command]
+pub fn delete_attribute(
+    attr_id: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::delete_attribute", Category::Db, &log, None, &app))?;
+    conn.execute(
+        "DELETE FROM attributes WHERE id = ?1",
+        rusqlite::params![attr_id],
+    )
+    .map_err(|e| log::push_str(e.to_string(), "commands::delete_attribute", Category::Db, &log, Some(&conn), &app))?;
+
+    log::push_event(Severity::Info, Category::Command, "commands::delete_attribute",
+        format!("Deleted attribute {attr_id}"), None, HashMap::new(), &log, Some(&conn), &app);
+    Ok(())
+}
+
+/// Move a node to a new parent (reparent).
+#[tauri::command]
+pub fn move_node(
+    node_id: String,
+    new_parent_id: Option<String>,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::move_node", Category::Db, &log, None, &app))?;
+
+    // Get new depth from parent
+    let new_depth: i32 = match &new_parent_id {
+        Some(pid) => {
+            conn.query_row(
+                "SELECT depth FROM xml_nodes WHERE id = ?1",
+                [pid],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|d| d + 1)
+            .unwrap_or(0)
+        }
+        None => 0,
+    };
+
+    // Get max order_index for new position
+    let max_order: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(order_index), -1) FROM xml_nodes WHERE document_id = (SELECT document_id FROM xml_nodes WHERE id = ?1)",
+            [&node_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(-1);
+
+    conn.execute(
+        "UPDATE xml_nodes SET parent_id = ?1, depth = ?2, order_index = ?3 WHERE id = ?4",
+        rusqlite::params![new_parent_id, new_depth, max_order + 1, node_id],
+    )
+    .map_err(|e| log::push_str(e.to_string(), "commands::move_node", Category::Db, &log, Some(&conn), &app))?;
+
+    log::push_event(Severity::Info, Category::Command, "commands::move_node",
+        format!("Moved node {node_id}"), None, HashMap::new(), &log, Some(&conn), &app);
     Ok(())
 }
 

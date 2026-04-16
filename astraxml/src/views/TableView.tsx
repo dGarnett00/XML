@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore, XmlNode, XmlAttribute } from '../store/app';
 import { invoke } from '../lib/tauri';
+import { ContextMenu, ContextMenuItem } from '../panels/ContextMenu';
 import './TableView.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ function safeRegex(pattern: string, flags?: string): RegExp | null {
 
 // ── Group Row ──────────────────────────────────────────────────────────────
 
-const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMultiSelected, isExpanded, onToggle, onSelect, childColumns, highlight }: {
+const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMultiSelected, isExpanded, onToggle, onSelect, onContextMenu, childColumns, highlight }: {
   group: GroupRow;
   index: number;
   isSelected: boolean;
@@ -97,11 +98,14 @@ const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMu
   isExpanded: boolean;
   onToggle: () => void;
   onSelect: (id: string, e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent, id: string) => void;
   childColumns: string[];
   highlight: string;
 }) {
   const updateNodeLocal = useAppStore((s) => s.updateNodeLocal);
+  const updateAttributeLocal = useAppStore((s) => s.updateAttributeLocal);
   const otherAttrs = group.attrs.filter((a) => a.name !== 'name');
+  const nameAttrObj = group.attrs.find((a) => a.name === 'name');
 
   async function handleNameEdit(newName: string) {
     try {
@@ -112,10 +116,21 @@ const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMu
     }
   }
 
+  async function handleNameAttrEdit(newValue: string) {
+    if (!nameAttrObj) return;
+    try {
+      await invoke('set_attribute', { nodeId: group.node.id, attrName: 'name', attrValue: newValue });
+      updateAttributeLocal(nameAttrObj.id, { value: newValue });
+    } catch (e) {
+      useAppStore.getState().setError(String(e));
+    }
+  }
+
   return (
     <tr
       className={`tv__row tv__row--group${isSelected ? ' selected' : ''}${isMultiSelected ? ' multi-selected' : ''}${isExpanded ? ' expanded' : ''}`}
       onClick={(e) => onSelect(group.node.id, e)}
+      onContextMenu={(e) => onContextMenu(e, group.node.id)}
       data-node-id={group.node.id}
     >
       <td className="tv__cell tv__cell--index">{index + 1}</td>
@@ -129,16 +144,37 @@ const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMu
       </td>
       <td className="tv__cell tv__cell--name">
         {group.nameAttr ? (
-          <EditableCell value={group.nameAttr} onCommit={() => {}} className="tv__name-val" highlight={highlight} />
+          <EditableCell value={group.nameAttr} onCommit={handleNameAttrEdit} className="tv__name-val" highlight={highlight} />
         ) : (
           <span className="tv__name-none">—</span>
         )}
       </td>
-      {childColumns.map((col) => (
-        <td key={col} className="tv__cell tv__cell--child-col">
-          <span className="tv__child-col-val">{group.childValueMap.get(col) ?? ''}</span>
-        </td>
-      ))}
+      {childColumns.map((col) => {
+        const colVal = group.childValueMap.get(col) ?? '';
+        return (
+          <td key={col} className="tv__cell tv__cell--child-col">
+            <EditableCell
+              value={colVal}
+              onCommit={async (newVal: string) => {
+                try {
+                  await invoke('set_child_value', { parentId: group.node.id, childName: col, childValue: newVal });
+                  // Update local text child node
+                  const store = useAppStore.getState();
+                  const childNode = store.nodes.find((n) => n.parentId === group.node.id && n.name === col && n.nodeType === 'element');
+                  if (childNode) {
+                    const textChild = store.nodes.find((n) => n.parentId === childNode.id && n.nodeType === 'text');
+                    if (textChild) store.updateNodeLocal(textChild.id, { value: newVal });
+                  }
+                } catch (e) {
+                  useAppStore.getState().setError(String(e));
+                }
+              }}
+              className="tv__child-col-val"
+              highlight={highlight}
+            />
+          </td>
+        );
+      })}
       <td className="tv__cell tv__cell--children-count">
         <span className="tv__count-badge">{group.children.length}</span>
       </td>
@@ -554,6 +590,25 @@ export function TableView() {
     }
   }
 
+  // ── Context Menu ────────────────────────────────────────────────────────
+
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+
+  const handleRowContextMenu = useCallback((e: React.MouseEvent, nodeId: string) => {
+    e.preventDefault();
+    selectNode(nodeId);
+    setCtxMenu({ x: e.clientX, y: e.clientY, nodeId });
+  }, [selectNode]);
+
+  const ctxMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!ctxMenu) return [];
+    return [
+      { label: 'Clone', icon: '📋', shortcut: 'Ctrl+D', onClick: () => handleBatchClone() },
+      { label: 'separator', separator: true, onClick: () => {} },
+      { label: 'Delete', icon: '🗑', shortcut: 'Del', danger: true, onClick: () => handleBatchDelete() },
+    ];
+  }, [ctxMenu]);
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   if (!document) {
@@ -575,8 +630,6 @@ export function TableView() {
       </div>
     );
   }
-
-  const totalCols = 6 + childColumns.length; // index + expand + element + name + childCols + children + attrs
 
   return (
     <div className="table-view" tabIndex={0}>
@@ -640,6 +693,7 @@ export function TableView() {
                   isExpanded={isExpanded}
                   onToggle={() => toggleExpand(group.node.id)}
                   onSelect={handleSelect}
+                  onContextMenu={handleRowContextMenu}
                   childColumns={childColumns}
                   highlight={highlight}
                 />,
@@ -667,6 +721,15 @@ export function TableView() {
           ↑↓ navigate &nbsp; Space expand &nbsp; ←→ collapse/expand &nbsp; Ctrl+Click multi-select &nbsp; Shift+Click range
         </span>
       </div>
+
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={ctxMenuItems}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </div>
   );
 }
