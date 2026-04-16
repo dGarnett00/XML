@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore, XmlNode, XmlAttribute } from '../store/app';
 import { invoke } from '../lib/tauri';
 import './TableView.css';
@@ -25,7 +25,7 @@ type SortDir = 'asc' | 'desc';
 
 // ── Editable Cell ──────────────────────────────────────────────────────────
 
-function EditableCell({ value, onCommit, className, highlight }: {
+const EditableCell = memo(function EditableCell({ value, onCommit, className, highlight }: {
   value: string;
   onCommit: (v: string) => void;
   className?: string;
@@ -78,6 +78,7 @@ function EditableCell({ value, onCommit, className, highlight }: {
   }
   return <span className={className} onDoubleClick={startEdit}>{display}</span>;
 }
+);
 
 // ── Safe regex helper ──────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ function safeRegex(pattern: string, flags?: string): RegExp | null {
 
 // ── Group Row ──────────────────────────────────────────────────────────────
 
-function GroupRowView({ group, index, isSelected, isMultiSelected, isExpanded, onToggle, onSelect, childColumns, highlight }: {
+const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMultiSelected, isExpanded, onToggle, onSelect, childColumns, highlight }: {
   group: GroupRow;
   index: number;
   isSelected: boolean;
@@ -151,10 +152,11 @@ function GroupRowView({ group, index, isSelected, isMultiSelected, isExpanded, o
     </tr>
   );
 }
+);
 
 // ── Child Row ──────────────────────────────────────────────────────────────
 
-function ChildRowView({ child, isSelected, onSelect, childColumns, highlight }: {
+const ChildRowView = memo(function ChildRowView({ child, isSelected, onSelect, childColumns, highlight }: {
   child: ChildRow;
   isSelected: boolean;
   onSelect: (id: string, e: React.MouseEvent) => void;
@@ -203,6 +205,7 @@ function ChildRowView({ child, isSelected, onSelect, childColumns, highlight }: 
     </tr>
   );
 }
+);
 
 // ── Sort Header ────────────────────────────────────────────────────────────
 
@@ -225,7 +228,12 @@ function SortHeader({ label, sortKey, currentSort, onSort, className }: {
 // ── Main Table ─────────────────────────────────────────────────────────────
 
 export function TableView() {
-  const { nodes, attributes, selectedNodeId, selectNode, document, filter } = useAppStore();
+  const nodes = useAppStore((s) => s.nodes);
+  const attributes = useAppStore((s) => s.attributes);
+  const selectedNodeId = useAppStore((s) => s.selectedNodeId);
+  const selectNode = useAppStore((s) => s.selectNode);
+  const document = useAppStore((s) => s.document);
+  const filter = useAppStore((s) => s.filter);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [multiSelectedIds, setMultiSelectedIds] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'name', dir: 'asc' });

@@ -4,7 +4,14 @@ import { invoke } from '../lib/tauri';
 import './DetailPanel.css';
 
 export function DetailPanel() {
-  const { nodes, attributes, selectedNodeId, document, addNodes, removeNodes, updateNodeLocal, selectNode } = useAppStore();
+  const nodes = useAppStore((s) => s.nodes);
+  const attributes = useAppStore((s) => s.attributes);
+  const selectedNodeId = useAppStore((s) => s.selectedNodeId);
+  const document = useAppStore((s) => s.document);
+  const addNodes = useAppStore((s) => s.addNodes);
+  const removeNodes = useAppStore((s) => s.removeNodes);
+  const updateNodeLocal = useAppStore((s) => s.updateNodeLocal);
+  const selectNode = useAppStore((s) => s.selectNode);
   const node = selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : null;
 
   // Attributes for the selected node

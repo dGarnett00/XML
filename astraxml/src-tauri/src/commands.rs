@@ -534,30 +534,29 @@ pub fn clone_node(
         )
         .unwrap_or(-1);
 
-    // Collect all descendants (BFS)
-    let mut to_clone: Vec<XmlNode> = vec![src.clone()];
-    let mut queue: Vec<String> = vec![node_id.clone()];
-    while let Some(pid) = queue.pop() {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, document_id, parent_id, node_type, name, value, order_index, depth
-                 FROM xml_nodes WHERE parent_id = ?1 ORDER BY order_index",
+    // Use recursive CTE to collect all descendants in one query
+    let mut desc_stmt = conn
+        .prepare(
+            "WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM xml_nodes WHERE id = ?1
+                UNION ALL
+                SELECT n.id FROM xml_nodes n JOIN descendants d ON n.parent_id = d.id
             )
-            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
-        let children: Vec<XmlNode> = stmt
-            .query_map([&pid], |row| Ok(XmlNode {
-                id: row.get(0)?, document_id: row.get(1)?, parent_id: row.get(2)?,
-                node_type: row.get(3)?, name: row.get(4)?, value: row.get(5)?,
-                order_index: row.get(6)?, depth: row.get(7)?,
-            }))
-            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?
-            .collect::<Result<_, _>>()
-            .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
-        for c in children {
-            queue.push(c.id.clone());
-            to_clone.push(c);
-        }
-    }
+            SELECT xn.id, xn.document_id, xn.parent_id, xn.node_type, xn.name, xn.value, xn.order_index, xn.depth
+            FROM xml_nodes xn JOIN descendants dd ON xn.id = dd.id
+            ORDER BY xn.order_index",
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+    let to_clone: Vec<XmlNode> = desc_stmt
+        .query_map([&node_id], |row| Ok(XmlNode {
+            id: row.get(0)?, document_id: row.get(1)?, parent_id: row.get(2)?,
+            node_type: row.get(3)?, name: row.get(4)?, value: row.get(5)?,
+            order_index: row.get(6)?, depth: row.get(7)?,
+        }))
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?
+        .collect::<Result<_, _>>()
+        .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
 
     // Build old_id -> new_id mapping
     let id_map: HashMap<String, String> = to_clone
@@ -565,11 +564,30 @@ pub fn clone_node(
         .map(|n| (n.id.clone(), Uuid::new_v4().to_string()))
         .collect();
 
+    // Wrap all inserts in a single transaction
+    conn.execute("BEGIN", [])
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+    // Prepare statements once outside the loop
+    let mut insert_node_stmt = conn
+        .prepare(
+            "INSERT INTO xml_nodes (id, document_id, parent_id, node_type, name, value, order_index, depth)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+    let mut select_attrs_stmt = conn
+        .prepare("SELECT id, node_id, name, value FROM attributes WHERE node_id = ?1")
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+    let mut insert_attr_stmt = conn
+        .prepare("INSERT INTO attributes (id, node_id, name, value) VALUES (?1,?2,?3,?4)")
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
     let mut new_nodes: Vec<XmlNode> = Vec::with_capacity(to_clone.len());
     for (i, old_node) in to_clone.iter().enumerate() {
         let new_id = &id_map[&old_node.id];
         let new_parent = if old_node.id == node_id {
-            // Root of clone keeps the same parent
             old_node.parent_id.clone()
         } else {
             old_node.parent_id.as_ref().and_then(|pid| id_map.get(pid)).cloned()
@@ -586,22 +604,15 @@ pub fn clone_node(
             depth: old_node.depth,
         };
 
-        conn.execute(
-            "INSERT INTO xml_nodes (id, document_id, parent_id, node_type, name, value, order_index, depth)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            rusqlite::params![
-                &new_node.id, &new_node.document_id, &new_node.parent_id,
-                &new_node.node_type, &new_node.name, &new_node.value,
-                new_node.order_index, new_node.depth
-            ],
-        )
+        insert_node_stmt.execute(rusqlite::params![
+            &new_node.id, &new_node.document_id, &new_node.parent_id,
+            &new_node.node_type, &new_node.name, &new_node.value,
+            new_node.order_index, new_node.depth
+        ])
         .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
 
-        // Clone attributes too
-        let mut attr_stmt = conn
-            .prepare("SELECT id, node_id, name, value FROM attributes WHERE node_id = ?1")
-            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
-        let attrs: Vec<Attribute> = attr_stmt
+        // Clone attributes
+        let attrs: Vec<Attribute> = select_attrs_stmt
             .query_map([&old_node.id], |row| Ok(Attribute {
                 id: row.get(0)?, node_id: row.get(1)?, name: row.get(2)?, value: row.get(3)?,
             }))
@@ -610,17 +621,22 @@ pub fn clone_node(
             .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
 
         for attr in &attrs {
-            conn.execute(
-                "INSERT INTO attributes (id, node_id, name, value) VALUES (?1,?2,?3,?4)",
-                rusqlite::params![
-                    Uuid::new_v4().to_string(), new_id, &attr.name, &attr.value
-                ],
-            )
+            insert_attr_stmt.execute(rusqlite::params![
+                Uuid::new_v4().to_string(), new_id, &attr.name, &attr.value
+            ])
             .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
         }
 
         new_nodes.push(new_node);
     }
+
+    // Drop prepared statements before COMMIT (they borrow conn)
+    drop(insert_node_stmt);
+    drop(select_attrs_stmt);
+    drop(insert_attr_stmt);
+
+    conn.execute("COMMIT", [])
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
 
     log::push_event(Severity::Info, Category::Command, "commands::clone_node",
         format!("Cloned {} nodes", new_nodes.len()), None, HashMap::new(), &log, Some(&conn), &app);
@@ -638,31 +654,35 @@ pub fn delete_node(
     let conn = state.0.lock()
         .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, None, &app))?;
 
-    // Collect all node IDs to delete (BFS)
-    let mut to_delete: Vec<String> = vec![node_id.clone()];
-    let mut queue: Vec<String> = vec![node_id.clone()];
-    while let Some(pid) = queue.pop() {
-        let mut stmt = conn
-            .prepare("SELECT id FROM xml_nodes WHERE parent_id = ?1")
-            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
-        let children: Vec<String> = stmt
-            .query_map([&pid], |row| row.get(0))
-            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?
-            .collect::<Result<_, _>>()
-            .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
-        for c in children {
-            queue.push(c.clone());
-            to_delete.push(c);
-        }
-    }
+    // Use recursive CTE to collect all descendant IDs in one query
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM xml_nodes WHERE id = ?1
+                UNION ALL
+                SELECT n.id FROM xml_nodes n JOIN descendants d ON n.parent_id = d.id
+            )
+            SELECT id FROM descendants",
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
 
-    // Delete attributes and nodes
-    for id in &to_delete {
-        conn.execute("DELETE FROM attributes WHERE node_id = ?1", [id])
-            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
-        conn.execute("DELETE FROM xml_nodes WHERE id = ?1", [id])
-            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
-    }
+    let to_delete: Vec<String> = stmt
+        .query_map([&node_id], |row| row.get(0))
+        .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?
+        .collect::<Result<_, _>>()
+        .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
+
+    // Batch delete — ON DELETE CASCADE handles attributes automatically
+    conn.execute(
+        "WITH RECURSIVE descendants(id) AS (
+            SELECT id FROM xml_nodes WHERE id = ?1
+            UNION ALL
+            SELECT n.id FROM xml_nodes n JOIN descendants d ON n.parent_id = d.id
+        )
+        DELETE FROM xml_nodes WHERE id IN (SELECT id FROM descendants)",
+        [&node_id],
+    )
+    .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
 
     log::push_event(Severity::Info, Category::Command, "commands::delete_node",
         format!("Deleted {} nodes", to_delete.len()), None, HashMap::new(), &log, Some(&conn), &app);

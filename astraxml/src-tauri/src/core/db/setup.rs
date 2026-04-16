@@ -18,6 +18,9 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+    conn.execute_batch("PRAGMA cache_size=-16000;")?;       // 16 MB page cache
+    conn.execute_batch("PRAGMA mmap_size=268435456;")?;     // 256 MB memory-mapped I/O
+    conn.execute_batch("PRAGMA temp_store=MEMORY;")?;       // temp tables in RAM
 
     conn.execute_batch(
         "
@@ -48,6 +51,8 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_nodes_doc   ON xml_nodes(document_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_parent ON xml_nodes(parent_id);
         CREATE INDEX IF NOT EXISTS idx_nodes_name   ON xml_nodes(name);
+        CREATE INDEX IF NOT EXISTS idx_nodes_doc_order ON xml_nodes(document_id, order_index);
+        CREATE INDEX IF NOT EXISTS idx_nodes_parent_order ON xml_nodes(parent_id, order_index);
 
         CREATE TABLE IF NOT EXISTS attributes (
             id      TEXT PRIMARY KEY,
@@ -58,6 +63,7 @@ fn apply_migrations(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_attrs_node ON attributes(node_id);
         CREATE INDEX IF NOT EXISTS idx_attrs_name ON attributes(name);
+        CREATE INDEX IF NOT EXISTS idx_attrs_node_name ON attributes(node_id, name);
 
         CREATE TABLE IF NOT EXISTS tags (
             id          TEXT PRIMARY KEY,

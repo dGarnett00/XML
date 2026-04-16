@@ -1,19 +1,19 @@
-import { useCallback } from 'react';
+import { useCallback, lazy, Suspense } from 'react';
 import { Toolbar } from './panels/Toolbar';
 import { FilterBar } from './panels/FilterBar';
 import { StatusBar } from './panels/StatusBar';
 import { DetailPanel } from './panels/DetailPanel';
 import { ErrorLogPanel } from './panels/ErrorLogPanel';
-import { TableView } from './views/TableView';
-import { TreeView } from './views/TreeView';
-import { RawView } from './views/RawView';
+const TableView = lazy(() => import('./views/TableView').then((m) => ({ default: m.TableView })));
+const TreeView = lazy(() => import('./views/TreeView').then((m) => ({ default: m.TreeView })));
+const RawView = lazy(() => import('./views/RawView').then((m) => ({ default: m.RawView })));
 import { useAppStore, OpenDocumentResult } from './store/app';
 import { useErrorLog } from './hooks/useErrorLog';
 import { invoke } from './lib/tauri';
 import './App.css';
 
 export default function App() {
-  const { viewMode } = useAppStore();
+  const viewMode = useAppStore((s) => s.viewMode);
   useErrorLog();
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -59,9 +59,11 @@ export default function App() {
 
       <div className="app__body">
         <div className="app__main">
-          {viewMode === 'table' && <TableView />}
-          {viewMode === 'tree'  && <TreeView />}
-          {viewMode === 'raw'   && <RawView />}
+          <Suspense fallback={<div className="app__loading">Loading view…</div>}>
+            {viewMode === 'table' && <TableView />}
+            {viewMode === 'tree'  && <TreeView />}
+            {viewMode === 'raw'   && <RawView />}
+          </Suspense>
         </div>
         <DetailPanel />
       </div>

@@ -111,6 +111,9 @@ interface ErrorLogState {
   rateBuckets:    RateBucket[];
   newEntryPulse:  LogSeverity | null;
 
+  // Pre-computed severity counts for O(1) lookups
+  _severityCounts: Record<LogSeverity, number>;
+
   // ── Mutations ─────────────────────────────────────────────────────────
   push:              (entry: LogEntry) => void;
   pushBatch:         (entries: LogEntry[]) => void;
@@ -181,24 +184,43 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
   traceFilter:    null,
   rateBuckets:    [],
   newEntryPulse:  null,
+  _severityCounts: { fatal: 0, error: 0, warn: 0, info: 0, debug: 0 },
 
   // ── Mutations ─────────────────────────────────────────────────────────
 
   push: (entry) =>
-    set((state) => ({
-      entries: [...state.entries.slice(-(MAX_ENTRIES - 1)), entry],
-      rateBuckets: updateBuckets(state.rateBuckets, entry),
-      newEntryPulse: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error
-        ? entry.severity : state.newEntryPulse,
-    })),
+    set((state) => {
+      const newCounts = { ...state._severityCounts };
+      newCounts[entry.severity]++;
+      // If we're at capacity, the oldest entry is evicted
+      if (state.entries.length >= MAX_ENTRIES) {
+        const evicted = state.entries[0];
+        newCounts[evicted.severity]--;
+      }
+      return {
+        entries: [...state.entries.slice(-(MAX_ENTRIES - 1)), entry],
+        rateBuckets: updateBuckets(state.rateBuckets, entry),
+        newEntryPulse: SEVERITY_RANK[entry.severity] >= SEVERITY_RANK.error
+          ? entry.severity : state.newEntryPulse,
+        _severityCounts: newCounts,
+      };
+    }),
 
   pushBatch: (batch) =>
-    set((state) => ({
-      entries: [...state.entries, ...batch].slice(-MAX_ENTRIES),
-      rateBuckets: batch.reduce(updateBuckets, state.rateBuckets),
-    })),
+    set((state) => {
+      const combined = [...state.entries, ...batch];
+      const trimmed = combined.slice(-MAX_ENTRIES);
+      // Recount from the trimmed array
+      const newCounts: Record<LogSeverity, number> = { fatal: 0, error: 0, warn: 0, info: 0, debug: 0 };
+      for (const e of trimmed) newCounts[e.severity]++;
+      return {
+        entries: trimmed,
+        rateBuckets: batch.reduce(updateBuckets, state.rateBuckets),
+        _severityCounts: newCounts,
+      };
+    }),
 
-  clear: () => set({ entries: [], rateBuckets: [], pinnedIds: new Set() }),
+  clear: () => set({ entries: [], rateBuckets: [], pinnedIds: new Set(), _severityCounts: { fatal: 0, error: 0, warn: 0, info: 0, debug: 0 } }),
 
   toggleVisible: () => set((s) => ({ isVisible: !s.isVisible })),
   setVisible:    (v) => set({ isVisible: v }),
@@ -281,10 +303,17 @@ export const useErrorLogStore = create<ErrorLogState>((set, get) => ({
     get().entries.filter((e) => e.traceId === traceId),
 
   countBySeverity: (sev) =>
-    get().entries.filter((e) => e.severity === sev).length,
+    get()._severityCounts[sev],
 
-  countAbove: (min) =>
-    get().entries.filter((e) => SEVERITY_RANK[e.severity] >= SEVERITY_RANK[min]).length,
+  countAbove: (min) => {
+    const counts = get()._severityCounts;
+    const minRank = SEVERITY_RANK[min];
+    let total = 0;
+    for (const [sev, count] of Object.entries(counts)) {
+      if (SEVERITY_RANK[sev as LogSeverity] >= minRank) total += count;
+    }
+    return total;
+  },
 
   allTags: () =>
     [...new Set(get().entries.flatMap((e) => e.tags))].sort(),

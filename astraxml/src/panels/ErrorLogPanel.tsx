@@ -173,35 +173,33 @@ function Sparkline({ data, width = 120, height = 24 }: {
 // ── Component ─────────────────────────────────────────────────────────────
 
 export function ErrorLogPanel() {
-  const {
-    entries,
-    isVisible,
-    autoScroll,
-    severityFilter,
-    categoryFilter,
-    searchQuery,
-    sessionId,
-    activeTab,
-    pinnedIds,
-    traceFilter,
-    rateBuckets,
-    newEntryPulse,
-    setVisible,
-    clear,
-    setSeverityFilter,
-    setCategoryFilter,
-    setSearchQuery,
-    setAutoScroll,
-    setActiveTab,
-    togglePin,
-    setTraceFilter,
-    clearPulse,
-    filteredEntries,
-    groupedEntries,
-    pinnedEntries,
-    countBySeverity,
-    currentRate,
-  } = useErrorLogStore();
+  const entries = useErrorLogStore((s) => s.entries);
+  const isVisible = useErrorLogStore((s) => s.isVisible);
+  const autoScroll = useErrorLogStore((s) => s.autoScroll);
+  const severityFilter = useErrorLogStore((s) => s.severityFilter);
+  const categoryFilter = useErrorLogStore((s) => s.categoryFilter);
+  const searchQuery = useErrorLogStore((s) => s.searchQuery);
+  const sessionId = useErrorLogStore((s) => s.sessionId);
+  const activeTab = useErrorLogStore((s) => s.activeTab);
+  const pinnedIds = useErrorLogStore((s) => s.pinnedIds);
+  const traceFilter = useErrorLogStore((s) => s.traceFilter);
+  const rateBuckets = useErrorLogStore((s) => s.rateBuckets);
+  const newEntryPulse = useErrorLogStore((s) => s.newEntryPulse);
+  const setVisible = useErrorLogStore((s) => s.setVisible);
+  const clear = useErrorLogStore((s) => s.clear);
+  const setSeverityFilter = useErrorLogStore((s) => s.setSeverityFilter);
+  const setCategoryFilter = useErrorLogStore((s) => s.setCategoryFilter);
+  const setSearchQuery = useErrorLogStore((s) => s.setSearchQuery);
+  const setAutoScroll = useErrorLogStore((s) => s.setAutoScroll);
+  const setActiveTab = useErrorLogStore((s) => s.setActiveTab);
+  const togglePin = useErrorLogStore((s) => s.togglePin);
+  const setTraceFilter = useErrorLogStore((s) => s.setTraceFilter);
+  const clearPulse = useErrorLogStore((s) => s.clearPulse);
+  const filteredEntries = useErrorLogStore((s) => s.filteredEntries);
+  const groupedEntries = useErrorLogStore((s) => s.groupedEntries);
+  const pinnedEntries = useErrorLogStore((s) => s.pinnedEntries);
+  const countBySeverity = useErrorLogStore((s) => s.countBySeverity);
+  const currentRate = useErrorLogStore((s) => s.currentRate);
 
   const [height,      setHeight]      = useState(DEFAULT_HEIGHT);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());

@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore, ViewMode, OpenDocumentResult } from '../store/app';
 import { useErrorLogStore } from '../store/errorLog';
 import { invoke, openFileDialog, saveFileDialog } from '../lib/tauri';
@@ -10,7 +11,18 @@ const VIEW_MODES: { id: ViewMode; label: string }[] = [
 ];
 
 export function Toolbar() {
-  const { viewMode, setViewMode, document, searchQuery, setSearchQuery } = useAppStore();
+  const viewMode = useAppStore((s) => s.viewMode);
+  const setViewMode = useAppStore((s) => s.setViewMode);
+  const document = useAppStore((s) => s.document);
+  const searchQuery = useAppStore((s) => s.searchQuery);
+  const setSearchQuery = useAppStore((s) => s.setSearchQuery);
+  const [localSearch, setLocalSearch] = useState(searchQuery);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => setSearchQuery(localSearch), 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [localSearch, setSearchQuery]);
   const toggleLog  = useErrorLogStore((s) => s.toggleVisible);
   const errorCount = useErrorLogStore((s) => s.countAbove('error'));
 
@@ -77,8 +89,8 @@ export function Toolbar() {
           className="toolbar__input"
           type="text"
           placeholder="Search nodes, attributes, values…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          value={localSearch}
+          onChange={(e) => setLocalSearch(e.target.value)}
         />
       </div>
 

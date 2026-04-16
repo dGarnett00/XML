@@ -1,24 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useAppStore } from '../store/app';
 import { invoke } from '../lib/tauri';
 import './RawView.css';
 
 export function RawView() {
-  const { document, nodes } = useAppStore();
+  const document = useAppStore((s) => s.document);
+  const nodes = useAppStore((s) => s.nodes);
   const [xml, setXml] = useState('');
   const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Re-serialize whenever the nodes array or document changes
+  // Debounce serialization — wait 500ms after last node change
   useEffect(() => {
     if (!document) { setXml(''); return; }
     let cancelled = false;
-    setLoading(true);
-    invoke<string>('serialize_document', { documentId: document.id })
-      .then((result) => { if (!cancelled) setXml(result); })
-      .catch((e) => { if (!cancelled) setXml(`<!-- Serialization error: ${e} -->`); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setLoading(true);
+      invoke<string>('serialize_document', { documentId: document.id })
+        .then((result) => { if (!cancelled) setXml(result); })
+        .catch((e) => { if (!cancelled) setXml(`<!-- Serialization error: ${e} -->`); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(debounceRef.current); };
   }, [document?.id, nodes]);
+
+  // Memoize highlighted output — only re-compute when xml string changes
+  const highlighted = useMemo(() => syntaxHighlight(xml), [xml]);
 
   if (!document) {
     return <div className="raw-view raw-view--empty"><p>No document open</p></div>;
@@ -27,7 +35,7 @@ export function RawView() {
   return (
     <div className="raw-view">
       {loading && <div className="raw-view__loading">Serializing…</div>}
-      <pre className="raw-view__content">{syntaxHighlight(xml)}</pre>
+      <pre className="raw-view__content">{highlighted}</pre>
     </div>
   );
 }
@@ -43,7 +51,7 @@ function syntaxHighlight(xml: string) {
   ));
 }
 
-function HighlightedLine({ text }: { text: string }) {
+const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }) {
   // Simple regex-based XML syntax highlighting
   const parts: React.ReactNode[] = [];
   let remaining = text;
@@ -121,3 +129,4 @@ function HighlightedLine({ text }: { text: string }) {
 
   return <span>{parts}</span>;
 }
+);

@@ -62,12 +62,17 @@ fn write_node(
     match node.node_type {
         NodeType::Text => {
             if let Some(v) = &node.value {
-                out.push_str(&format!("{}{}\n", pad, escape_xml(v)));
+                out.push_str(&pad);
+                out.push_str(&escape_xml(v));
+                out.push('\n');
             }
         }
         NodeType::Comment => {
             if let Some(v) = &node.value {
-                out.push_str(&format!("{}<!--{}-->\n", pad, v));
+                out.push_str(&pad);
+                out.push_str("<!--");
+                out.push_str(v);
+                out.push_str("-->\n");
             }
         }
         NodeType::Element | NodeType::Attribute => {
@@ -83,20 +88,31 @@ fn write_node(
             });
 
             if child_nodes.is_none_or(|c| c.is_empty()) {
-                // self-closing
-                out.push_str(&format!("{}<{}{}/>\n", pad, node.name, attr_str));
+                out.push_str(&pad);
+                out.push('<');
+                out.push_str(&node.name);
+                out.push_str(&attr_str);
+                out.push_str("/>\n");
             } else {
                 let kids = child_nodes.unwrap();
 
-                // If the element has exactly one text child, render inline
                 if kids.len() == 1 && kids[0].node_type == NodeType::Text {
                     let text_value = kids[0].value.as_deref().unwrap_or("");
-                    out.push_str(&format!(
-                        "{}<{}{}>{}</{}>\n",
-                        pad, node.name, attr_str, escape_xml(text_value), node.name
-                    ));
+                    out.push_str(&pad);
+                    out.push('<');
+                    out.push_str(&node.name);
+                    out.push_str(&attr_str);
+                    out.push('>');
+                    out.push_str(&escape_xml(text_value));
+                    out.push_str("</");
+                    out.push_str(&node.name);
+                    out.push_str(">\n");
                 } else {
-                    out.push_str(&format!("{}<{}{}>\n", pad, node.name, attr_str));
+                    out.push_str(&pad);
+                    out.push('<');
+                    out.push_str(&node.name);
+                    out.push_str(&attr_str);
+                    out.push_str(">\n");
                     for kid in kids {
                         write_node(
                             &kid.id,
@@ -107,7 +123,10 @@ fn write_node(
                             out,
                         );
                     }
-                    out.push_str(&format!("{}</{}>\n", pad, node.name));
+                    out.push_str(&pad);
+                    out.push_str("</");
+                    out.push_str(&node.name);
+                    out.push_str(">\n");
                 }
             }
         }
@@ -115,9 +134,16 @@ fn write_node(
 }
 
 fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&'  => out.push_str("&amp;"),
+            '<'  => out.push_str("&lt;"),
+            '>'  => out.push_str("&gt;"),
+            '"'  => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _    => out.push(c),
+        }
+    }
+    out
 }

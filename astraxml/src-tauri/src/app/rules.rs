@@ -93,66 +93,66 @@ fn filter_nodes(
     document_id: &str,
     filters: &[RuleFilter],
 ) -> Result<Vec<String>, String> {
-    // Start with all element nodes in the document
-    let mut stmt = conn
-        .prepare("SELECT id FROM xml_nodes WHERE document_id = ?1 AND node_type = 'element'")
-        .map_err(|e| e.to_string())?;
+    if filters.is_empty() {
+        // No filters — return all element nodes
+        let mut stmt = conn
+            .prepare("SELECT id FROM xml_nodes WHERE document_id = ?1 AND node_type = 'element'")
+            .map_err(|e| e.to_string())?;
+        let ids: Vec<String> = stmt
+            .query_map(params![document_id], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .collect();
+        return Ok(ids);
+    }
 
-    let all_ids: Vec<String> = stmt
-        .query_map(params![document_id], |row| row.get(0))
+    // Build a single query with JOINs for all filters — eliminates N+1 pattern
+    let mut sql = String::from(
+        "SELECT DISTINCT n.id FROM xml_nodes n"
+    );
+    let mut conditions = vec!["n.document_id = ?1".to_string(), "n.node_type = 'element'".to_string()];
+    let mut bind_values: Vec<String> = vec![document_id.to_string()];
+    let mut param_idx = 2;
+
+    for (i, filter) in filters.iter().enumerate() {
+        let alias = format!("a{}", i);
+        sql.push_str(&format!(
+            " LEFT JOIN attributes {} ON {}.node_id = n.id AND {}.name = ?{}",
+            alias, alias, alias, param_idx
+        ));
+        bind_values.push(filter.field.clone());
+        param_idx += 1;
+
+        let filter_cond = match filter.op {
+            FilterOp::Equals => format!("{}.value = ?{}", alias, param_idx),
+            FilterOp::NotEquals => format!("({}.value IS NULL OR {}.value != ?{})", alias, alias, param_idx),
+            FilterOp::Contains => format!("{}.value LIKE '%' || ?{} || '%'", alias, param_idx),
+            FilterOp::GreaterThan => format!("CAST({}.value AS REAL) > CAST(?{} AS REAL)", alias, param_idx),
+            FilterOp::LessThan => format!("CAST({}.value AS REAL) < CAST(?{} AS REAL)", alias, param_idx),
+        };
+        conditions.push(filter_cond);
+        bind_values.push(filter.value.clone());
+        param_idx += 1;
+    }
+
+    sql.push_str(" WHERE ");
+    sql.push_str(&conditions.join(" AND "));
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
+    // Bind all parameters dynamically
+    let params: Vec<&dyn rusqlite::types::ToSql> = bind_values
+        .iter()
+        .map(|v| v as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let ids: Vec<String> = stmt
+        .query_map(params.as_slice(), |row| row.get(0))
         .map_err(|e| e.to_string())?
         .flatten()
         .collect();
 
-    // Filter in memory for now — will be SQL-optimized in Sprint 10
-    let mut matching = Vec::new();
-    for node_id in all_ids {
-        if node_matches(conn, &node_id, filters)? {
-            matching.push(node_id);
-        }
-    }
-
-    Ok(matching)
-}
-
-fn node_matches(
-    conn: &Connection,
-    node_id: &str,
-    filters: &[RuleFilter],
-) -> Result<bool, String> {
-    for filter in filters {
-        let val: Option<String> = conn
-            .query_row(
-                "SELECT a.value FROM attributes a WHERE a.node_id = ?1 AND a.name = ?2",
-                params![node_id, filter.field],
-                |row| row.get(0),
-            )
-            .ok();
-
-        let val = match val {
-            Some(v) => v,
-            None => continue,
-        };
-
-        let matches = match filter.op {
-            FilterOp::Equals => val == filter.value,
-            FilterOp::NotEquals => val != filter.value,
-            FilterOp::Contains => val.contains(&filter.value),
-            FilterOp::GreaterThan => {
-                val.parse::<f64>().unwrap_or(f64::NEG_INFINITY)
-                    > filter.value.parse::<f64>().unwrap_or(f64::NEG_INFINITY)
-            }
-            FilterOp::LessThan => {
-                val.parse::<f64>().unwrap_or(f64::INFINITY)
-                    < filter.value.parse::<f64>().unwrap_or(f64::INFINITY)
-            }
-        };
-
-        if !matches {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    Ok(ids)
 }
 
 fn execute_action(

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useAppStore, XmlNode, XmlAttribute } from '../store/app';
 import { invoke } from '../lib/tauri';
 import './TreeView.css';
@@ -9,7 +9,7 @@ type AttrsByNode = Map<string, XmlAttribute[]>;
 const EMPTY_CHILDREN: XmlNode[] = [];
 const EMPTY_ATTRS: XmlAttribute[] = [];
 
-function TreeNode({ node, childrenByParent, attrsByNode }: { node: XmlNode; childrenByParent: ChildrenByParent; attrsByNode: AttrsByNode }) {
+const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode }: { node: XmlNode; childrenByParent: ChildrenByParent; attrsByNode: AttrsByNode }) {
   const [expanded, setExpanded] = useState(true);
   const [editingName, setEditingName] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -128,9 +128,12 @@ function TreeNode({ node, childrenByParent, attrsByNode }: { node: XmlNode; chil
     </div>
   );
 }
+);
 
 export function TreeView() {
-  const { nodes, attributes, document } = useAppStore();
+  const nodes = useAppStore((s) => s.nodes);
+  const attributes = useAppStore((s) => s.attributes);
+  const document = useAppStore((s) => s.document);
 
   const childrenByParent: ChildrenByParent = useMemo(() => {
     const map: ChildrenByParent = new Map();

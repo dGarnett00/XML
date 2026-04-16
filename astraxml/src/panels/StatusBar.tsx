@@ -3,7 +3,11 @@ import { useErrorLogStore } from '../store/errorLog';
 import './StatusBar.css';
 
 export function StatusBar() {
-  const { document, nodes, selectedNodeId, isLoading, error } = useAppStore();
+  const document = useAppStore((s) => s.document);
+  const nodes = useAppStore((s) => s.nodes);
+  const selectedNodeId = useAppStore((s) => s.selectedNodeId);
+  const isLoading = useAppStore((s) => s.isLoading);
+  const error = useAppStore((s) => s.error);
   const errorCount  = useErrorLogStore((s) => s.countAbove('error'));
   const toggleLog   = useErrorLogStore((s) => s.toggleVisible);
 
