@@ -16,9 +16,7 @@
 
 import { useEffect } from 'react';
 import { useErrorLogStore, LogEntry } from '../store/errorLog';
-
-const isTauri = (): boolean =>
-  typeof (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] !== 'undefined';
+import { isTauri } from '../lib/tauri';
 
 export function useErrorLog(): void {
   const push      = useErrorLogStore((s) => s.push);

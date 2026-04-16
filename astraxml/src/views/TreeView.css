@@ -20,6 +20,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.08s;
+  flex-wrap: wrap;
 }
 .tree-node__row:hover { background: var(--bg-surface); }
 .tree-node__row.selected { background: rgba(85, 180, 255, 0.15); }
@@ -32,6 +33,42 @@
   flex-shrink: 0;
 }
 .tree-node__toggle:hover { color: var(--accent-blue); }
-.tree-node__name { color: var(--accent-blue); }
+.tree-node__name { color: var(--accent-blue); cursor: text; }
+
+.tree-node__attr { font-size: 12px; }
+.tree-node__attr-name { color: var(--accent-purple, #c792ea); }
+.tree-node__attr-value { color: var(--accent-green, #c3e88d); }
+
+.tree-node__inline-text {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.tree-node__text-value {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.tree-node__comment {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 12px;
+}
+
+.tree-node__edit {
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-blue);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 4px;
+  outline: none;
+  box-shadow: var(--glow-blue);
+  min-width: 80px;
+}
 
 .tree-node__children { margin-left: 16px; }

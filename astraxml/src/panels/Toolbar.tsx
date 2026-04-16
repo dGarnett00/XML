@@ -1,20 +1,7 @@
-import { useAppStore, ViewMode } from '../store/app';
+import { useAppStore, ViewMode, OpenDocumentResult } from '../store/app';
 import { useErrorLogStore } from '../store/errorLog';
+import { invoke, openFileDialog, saveFileDialog } from '../lib/tauri';
 import './Toolbar.css';
-
-// Tauri APIs are only available inside the desktop window, not in a browser.
-const isTauri = () => typeof (window as any).__TAURI_INTERNALS__ !== 'undefined';
-
-async function getTauriInvoke() {
-  if (!isTauri()) throw new Error('Run the app via "npm run tauri dev" — Tauri APIs are not available in a browser.');
-  const { invoke } = await import('@tauri-apps/api/core');
-  return invoke;
-}
-
-async function getTauriDialog() {
-  if (!isTauri()) throw new Error('Run the app via "npm run tauri dev" — Tauri APIs are not available in a browser.');
-  return import('@tauri-apps/plugin-dialog');
-}
 
 const VIEW_MODES: { id: ViewMode; label: string }[] = [
   { id: 'table', label: 'Table' },
@@ -30,27 +17,22 @@ export function Toolbar() {
   async function handleOpen() {
     const store = useAppStore.getState();
     try {
-      const { open } = await getTauriDialog();
-      const invoke = await getTauriInvoke();
-      const selected = await open({
-        title: 'Open XML File',
-        multiple: false,
-        filters: [{ name: 'XML Files', extensions: ['xml'] }],
-      });
-      if (!selected) return;
-      const path = typeof selected === 'string' ? selected : (selected as any).path ?? String(selected);
+      const path = await openFileDialog();
+      if (!path) return;
       store.setLoading(true);
       store.setError(null);
-      const result = await invoke<{ document: any; nodeCount: number }>('open_document', { path });
-      store.setDocument({
-        id:          result.document.id,
-        path:        result.document.path,
-        displayName: result.document.display_name,
-        rootNodeId:  result.document.root_node_id,
-        nodeCount:   result.nodeCount,
-      });
-      const nodes = await invoke<any[]>('get_nodes', { documentId: result.document.id });
-      store.setNodes(nodes);
+      const result = await invoke<OpenDocumentResult>('open_document', { path });
+      store.loadDocument(
+        {
+          id: result.document.id,
+          path: result.document.path,
+          displayName: result.document.displayName,
+          rootNodeId: result.document.rootNodeId,
+          nodeCount: result.nodeCount,
+        },
+        result.nodes,
+        result.attributes,
+      );
     } catch (e) {
       store.setError(String(e));
     } finally {
@@ -62,7 +44,6 @@ export function Toolbar() {
     const doc = useAppStore.getState().document;
     if (!doc) return;
     try {
-      const invoke = await getTauriInvoke();
       await invoke('export_document', { documentId: doc.id, destPath: doc.path });
     } catch (e) {
       useAppStore.getState().setError(String(e));
@@ -73,13 +54,7 @@ export function Toolbar() {
     const doc = useAppStore.getState().document;
     if (!doc) return;
     try {
-      const { save } = await getTauriDialog();
-      const invoke = await getTauriInvoke();
-      const dest = await save({
-        title: 'Export XML File',
-        defaultPath: doc.displayName,
-        filters: [{ name: 'XML Files', extensions: ['xml'] }],
-      });
+      const dest = await saveFileDialog(doc.displayName);
       if (!dest) return;
       await invoke('export_document', { documentId: doc.id, destPath: dest });
     } catch (e) {

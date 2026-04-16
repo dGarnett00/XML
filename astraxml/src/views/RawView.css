@@ -10,10 +10,39 @@
   justify-content: center;
   color: var(--text-muted);
 }
+.raw-view__loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
 .raw-view__content {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.6;
   white-space: pre;
+  margin: 0;
 }
+
+.raw-view__line {
+  display: flex;
+  gap: 12px;
+}
+.raw-view__line-num {
+  display: inline-block;
+  min-width: 36px;
+  text-align: right;
+  color: var(--text-muted);
+  opacity: 0.5;
+  -webkit-user-select: none;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* Syntax highlighting */
+.raw-hl--tag     { color: var(--accent-blue); }
+.raw-hl--attr    { color: var(--accent-purple); }
+.raw-hl--value   { color: var(--accent-green); }
+.raw-hl--comment { color: var(--text-muted); font-style: italic; }
+.raw-hl--text    { color: var(--text-primary); }
+.raw-hl--decl    { color: var(--accent-cyan); }

@@ -2,16 +2,28 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use rusqlite::Connection;
+use serde::Serialize;
 use tauri::State;
+use uuid::Uuid;
 
 use crate::app::{editor, search as search_engine, rules};
-use crate::core::{diff::snapshot, schema::validate};
+use crate::core::{diff::snapshot, schema::validate, xml::serializer};
 use crate::core::error::{Category, Severity};
 use crate::core::error::log::{self, LogEntry, LogState};
-use crate::models::{Attribute, XmlNode};
+use crate::models::{Attribute, Document, NodeType, XmlNode};
 
 /// Global DB connection wrapped in a Mutex for thread-safe access.
 pub struct DbState(pub Mutex<Connection>);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDocumentResponse {
+    document: Document,
+    node_count: usize,
+    root_node_id: Option<String>,
+    nodes: Vec<XmlNode>,
+    attributes: Vec<Attribute>,
+}
 
 // ── Document ───────────────────────────────────────────────────────────────
 
@@ -21,18 +33,22 @@ pub fn open_document(
     state: State<'_, DbState>,
     log: State<'_, LogState>,
     app: tauri::AppHandle,
-) -> Result<serde_json::Value, String> {
-    let conn = state.0.lock()
+) -> Result<OpenDocumentResponse, String> {
+    let mut conn = state.0.lock()
         .map_err(|e| log::push_str(e.to_string(), "commands::open_document", Category::Db, &log, None, &app))?;
-    let result = editor::open_document(&conn, &path)
+    let result = editor::open_document(&mut conn, &path)
         .map_err(|e| log::push_str(e, "editor::open_document", Category::Io, &log, Some(&conn), &app))?;
+    let node_count = result.nodes.len();
+    let root_node_id = result.document.root_node_id.clone();
     log::push_event(Severity::Info, Category::Io, "commands::open_document",
         format!("Opened: {path}"), None, HashMap::new(), &log, Some(&conn), &app);
-    Ok(serde_json::json!({
-        "document": result.document,
-        "nodeCount": result.nodes.len(),
-        "rootNodeId": result.document.root_node_id,
-    }))
+    Ok(OpenDocumentResponse {
+        document: result.document,
+        node_count,
+        root_node_id,
+        nodes: result.nodes,
+        attributes: result.attributes,
+    })
 }
 
 // ── Search ─────────────────────────────────────────────────────────────────
@@ -384,4 +400,326 @@ pub fn log_ui_error(
 #[tauri::command]
 pub fn get_session_id(log: State<'_, LogState>) -> String {
     log.session_id()
+}
+
+// ── Node CRUD ──────────────────────────────────────────────────────────────
+
+/// Add a new node under a given parent. Returns the created node.
+#[tauri::command]
+pub fn add_node(
+    document_id: String,
+    parent_id: Option<String>,
+    name: String,
+    node_type: NodeType,
+    value: Option<String>,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<XmlNode, String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::add_node", Category::Db, &log, None, &app))?;
+
+    // Determine the next order_index
+    let max_order: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(order_index), -1) FROM xml_nodes WHERE document_id = ?1",
+            [&document_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(-1);
+
+    // Determine depth from parent
+    let depth: i32 = match &parent_id {
+        Some(pid) => {
+            conn.query_row(
+                "SELECT depth FROM xml_nodes WHERE id = ?1",
+                [pid],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|d| d + 1)
+            .unwrap_or(0)
+        }
+        None => 0,
+    };
+
+    let node = XmlNode {
+        id: Uuid::new_v4().to_string(),
+        document_id: document_id.clone(),
+        parent_id: parent_id.clone(),
+        node_type,
+        name: name.clone(),
+        value,
+        order_index: max_order + 1,
+        depth,
+    };
+
+    conn.execute(
+        "INSERT INTO xml_nodes (id, document_id, parent_id, node_type, name, value, order_index, depth)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+        rusqlite::params![
+            &node.id, &node.document_id, &node.parent_id,
+            &node.node_type, &node.name, &node.value,
+            node.order_index, node.depth
+        ],
+    )
+    .map_err(|e| log::push_str(e.to_string(), "commands::add_node", Category::Db, &log, Some(&conn), &app))?;
+
+    log::push_event(Severity::Info, Category::Command, "commands::add_node",
+        format!("Added node: {name}"), None, HashMap::new(), &log, Some(&conn), &app);
+    Ok(node)
+}
+
+/// Update a node's name and/or value.
+#[tauri::command]
+pub fn update_node(
+    node_id: String,
+    name: Option<String>,
+    value: Option<String>,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::update_node", Category::Db, &log, None, &app))?;
+
+    if let Some(n) = &name {
+        conn.execute(
+            "UPDATE xml_nodes SET name = ?1 WHERE id = ?2",
+            rusqlite::params![n, &node_id],
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::update_node", Category::Db, &log, Some(&conn), &app))?;
+    }
+    if let Some(v) = &value {
+        conn.execute(
+            "UPDATE xml_nodes SET value = ?1 WHERE id = ?2",
+            rusqlite::params![v, &node_id],
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::update_node", Category::Db, &log, Some(&conn), &app))?;
+    }
+    Ok(())
+}
+
+/// Deep-clone a node and all its descendants + attributes. Returns the new nodes.
+#[tauri::command]
+pub fn clone_node(
+    node_id: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<XmlNode>, String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, None, &app))?;
+
+    // Get the source node
+    let src: XmlNode = conn
+        .query_row(
+            "SELECT id, document_id, parent_id, node_type, name, value, order_index, depth
+             FROM xml_nodes WHERE id = ?1",
+            [&node_id],
+            |row| Ok(XmlNode {
+                id: row.get(0)?, document_id: row.get(1)?, parent_id: row.get(2)?,
+                node_type: row.get(3)?, name: row.get(4)?, value: row.get(5)?,
+                order_index: row.get(6)?, depth: row.get(7)?,
+            }),
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+    // Max order_index for insertion position
+    let max_order: i32 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(order_index), -1) FROM xml_nodes WHERE document_id = ?1",
+            [&src.document_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(-1);
+
+    // Collect all descendants (BFS)
+    let mut to_clone: Vec<XmlNode> = vec![src.clone()];
+    let mut queue: Vec<String> = vec![node_id.clone()];
+    while let Some(pid) = queue.pop() {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, document_id, parent_id, node_type, name, value, order_index, depth
+                 FROM xml_nodes WHERE parent_id = ?1 ORDER BY order_index",
+            )
+            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+        let children: Vec<XmlNode> = stmt
+            .query_map([&pid], |row| Ok(XmlNode {
+                id: row.get(0)?, document_id: row.get(1)?, parent_id: row.get(2)?,
+                node_type: row.get(3)?, name: row.get(4)?, value: row.get(5)?,
+                order_index: row.get(6)?, depth: row.get(7)?,
+            }))
+            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?
+            .collect::<Result<_, _>>()
+            .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+        for c in children {
+            queue.push(c.id.clone());
+            to_clone.push(c);
+        }
+    }
+
+    // Build old_id -> new_id mapping
+    let id_map: HashMap<String, String> = to_clone
+        .iter()
+        .map(|n| (n.id.clone(), Uuid::new_v4().to_string()))
+        .collect();
+
+    let mut new_nodes: Vec<XmlNode> = Vec::with_capacity(to_clone.len());
+    for (i, old_node) in to_clone.iter().enumerate() {
+        let new_id = &id_map[&old_node.id];
+        let new_parent = if old_node.id == node_id {
+            // Root of clone keeps the same parent
+            old_node.parent_id.clone()
+        } else {
+            old_node.parent_id.as_ref().and_then(|pid| id_map.get(pid)).cloned()
+        };
+
+        let new_node = XmlNode {
+            id: new_id.clone(),
+            document_id: old_node.document_id.clone(),
+            parent_id: new_parent,
+            node_type: old_node.node_type.clone(),
+            name: old_node.name.clone(),
+            value: old_node.value.clone(),
+            order_index: max_order + 1 + i as i32,
+            depth: old_node.depth,
+        };
+
+        conn.execute(
+            "INSERT INTO xml_nodes (id, document_id, parent_id, node_type, name, value, order_index, depth)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![
+                &new_node.id, &new_node.document_id, &new_node.parent_id,
+                &new_node.node_type, &new_node.name, &new_node.value,
+                new_node.order_index, new_node.depth
+            ],
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+        // Clone attributes too
+        let mut attr_stmt = conn
+            .prepare("SELECT id, node_id, name, value FROM attributes WHERE node_id = ?1")
+            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+        let attrs: Vec<Attribute> = attr_stmt
+            .query_map([&old_node.id], |row| Ok(Attribute {
+                id: row.get(0)?, node_id: row.get(1)?, name: row.get(2)?, value: row.get(3)?,
+            }))
+            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?
+            .collect::<Result<_, _>>()
+            .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+
+        for attr in &attrs {
+            conn.execute(
+                "INSERT INTO attributes (id, node_id, name, value) VALUES (?1,?2,?3,?4)",
+                rusqlite::params![
+                    Uuid::new_v4().to_string(), new_id, &attr.name, &attr.value
+                ],
+            )
+            .map_err(|e| log::push_str(e.to_string(), "commands::clone_node", Category::Db, &log, Some(&conn), &app))?;
+        }
+
+        new_nodes.push(new_node);
+    }
+
+    log::push_event(Severity::Info, Category::Command, "commands::clone_node",
+        format!("Cloned {} nodes", new_nodes.len()), None, HashMap::new(), &log, Some(&conn), &app);
+    Ok(new_nodes)
+}
+
+/// Delete a node and all its descendants + their attributes.
+#[tauri::command]
+pub fn delete_node(
+    node_id: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<String>, String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, None, &app))?;
+
+    // Collect all node IDs to delete (BFS)
+    let mut to_delete: Vec<String> = vec![node_id.clone()];
+    let mut queue: Vec<String> = vec![node_id.clone()];
+    while let Some(pid) = queue.pop() {
+        let mut stmt = conn
+            .prepare("SELECT id FROM xml_nodes WHERE parent_id = ?1")
+            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
+        let children: Vec<String> = stmt
+            .query_map([&pid], |row| row.get(0))
+            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?
+            .collect::<Result<_, _>>()
+            .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
+        for c in children {
+            queue.push(c.clone());
+            to_delete.push(c);
+        }
+    }
+
+    // Delete attributes and nodes
+    for id in &to_delete {
+        conn.execute("DELETE FROM attributes WHERE node_id = ?1", [id])
+            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
+        conn.execute("DELETE FROM xml_nodes WHERE id = ?1", [id])
+            .map_err(|e| log::push_str(e.to_string(), "commands::delete_node", Category::Db, &log, Some(&conn), &app))?;
+    }
+
+    log::push_event(Severity::Info, Category::Command, "commands::delete_node",
+        format!("Deleted {} nodes", to_delete.len()), None, HashMap::new(), &log, Some(&conn), &app);
+    Ok(to_delete)
+}
+
+// ── Serialize ──────────────────────────────────────────────────────────────
+
+/// Return the full XML string for a document (used by RawView).
+#[tauri::command]
+pub fn serialize_document(
+    document_id: String,
+    state: State<'_, DbState>,
+    log: State<'_, LogState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let conn = state.0.lock()
+        .map_err(|e| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, None, &app))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, document_id, parent_id, node_type, name, value, order_index, depth
+             FROM xml_nodes WHERE document_id = ?1 ORDER BY order_index",
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?;
+
+    let nodes: Vec<XmlNode> = stmt
+        .query_map([&document_id], |row| Ok(XmlNode {
+            id: row.get(0)?, document_id: row.get(1)?, parent_id: row.get(2)?,
+            node_type: row.get(3)?, name: row.get(4)?, value: row.get(5)?,
+            order_index: row.get(6)?, depth: row.get(7)?,
+        }))
+        .map_err(|e| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?
+        .collect::<Result<_, _>>()
+        .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?;
+
+    let mut stmt2 = conn
+        .prepare(
+            "SELECT id, node_id, name, value FROM attributes
+             WHERE node_id IN (SELECT id FROM xml_nodes WHERE document_id = ?1)",
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?;
+
+    let attributes: Vec<Attribute> = stmt2
+        .query_map([&document_id], |row| Ok(Attribute {
+            id: row.get(0)?, node_id: row.get(1)?, name: row.get(2)?, value: row.get(3)?,
+        }))
+        .map_err(|e| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?
+        .collect::<Result<_, _>>()
+        .map_err(|e: rusqlite::Error| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?;
+
+    let root_id: String = conn
+        .query_row(
+            "SELECT root_node_id FROM documents WHERE id = ?1",
+            [&document_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| log::push_str(e.to_string(), "commands::serialize_document", Category::Db, &log, Some(&conn), &app))?;
+
+    Ok(serializer::serialize(&nodes, &attributes, &root_id))
 }

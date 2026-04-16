@@ -37,6 +37,11 @@ pub fn run() {
             commands::export_error_log,
             commands::log_ui_error,
             commands::get_session_id,
+            commands::add_node,
+            commands::update_node,
+            commands::clone_node,
+            commands::delete_node,
+            commands::serialize_document,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

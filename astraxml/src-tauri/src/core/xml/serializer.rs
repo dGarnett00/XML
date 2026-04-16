@@ -7,7 +7,7 @@ pub fn serialize(
     attributes: &[Attribute],
     root_id: &str,
 ) -> String {
-    let mut out = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+    let mut out = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>"#);
     out.push('\n');
 
     // Build lookup maps
@@ -57,7 +57,7 @@ fn write_node(
         None => return,
     };
 
-    let pad = "  ".repeat(indent);
+    let pad = "    ".repeat(indent);
 
     match node.node_type {
         NodeType::Text => {
@@ -86,8 +86,17 @@ fn write_node(
                 // self-closing
                 out.push_str(&format!("{}<{}{}/>\n", pad, node.name, attr_str));
             } else {
-                out.push_str(&format!("{}<{}{}>\n", pad, node.name, attr_str));
-                if let Some(kids) = child_nodes {
+                let kids = child_nodes.unwrap();
+
+                // If the element has exactly one text child, render inline
+                if kids.len() == 1 && kids[0].node_type == NodeType::Text {
+                    let text_value = kids[0].value.as_deref().unwrap_or("");
+                    out.push_str(&format!(
+                        "{}<{}{}>{}</{}>\n",
+                        pad, node.name, attr_str, escape_xml(text_value), node.name
+                    ));
+                } else {
+                    out.push_str(&format!("{}<{}{}>\n", pad, node.name, attr_str));
                     for kid in kids {
                         write_node(
                             &kid.id,
@@ -98,8 +107,8 @@ fn write_node(
                             out,
                         );
                     }
+                    out.push_str(&format!("{}</{}>\n", pad, node.name));
                 }
-                out.push_str(&format!("{}</{}>\n", pad, node.name));
             }
         }
     }

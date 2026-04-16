@@ -63,8 +63,7 @@ const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 600;
 const DEFAULT_HEIGHT = 240;
 
-const isTauri = (): boolean =>
-  typeof (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] !== 'undefined';
+import { isTauri } from '../lib/tauri';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -119,7 +118,6 @@ export function ErrorLogPanel() {
     categoryFilter,
     searchQuery,
     sessionId,
-    toggleVisible,
     setVisible,
     clear,
     setSeverityFilter,
@@ -288,6 +286,7 @@ export function ErrorLogPanel() {
 
         <select
           className="errlog__cat-select"
+          title="Filter by category"
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value as LogCategory | 'all')}
         >
