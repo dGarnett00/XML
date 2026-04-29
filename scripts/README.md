@@ -143,7 +143,7 @@ The launcher was redesigned around a five-phase startup model.
 Before running these scripts, ensure:
 
 | Requirement | Check Command | Install Guide |
-|-------------|---------------|---------------|
+| --- | --- | --- |
 | **Node.js 18+** | `node --version` | [nodejs.org](https://nodejs.org) |
 | **npm** | `npm --version` | Comes with Node.js |
 | **Rust 1.70+** | `rustc --version` | [rustup.rs](https://rustup.rs) |

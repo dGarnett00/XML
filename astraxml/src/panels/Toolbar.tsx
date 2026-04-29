@@ -208,6 +208,8 @@ export function Toolbar() {
                   />
                   <select
                     className="toolbar__rule-select"
+                    aria-label={`Bulk filter operator ${i + 1}`}
+                    title={`Bulk filter operator ${i + 1}`}
                     value={f.op}
                     onChange={(e) => {
                       const next = [...bulkFilters];
@@ -245,6 +247,8 @@ export function Toolbar() {
                 <div key={i} className="toolbar__rule-row">
                   <select
                     className="toolbar__rule-select"
+                    aria-label={`Bulk action type ${i + 1}`}
+                    title={`Bulk action type ${i + 1}`}
                     value={a.action}
                     onChange={(e) => {
                       const next = [...bulkActions];
