@@ -6,6 +6,15 @@ import './TreeView.css';
 
 type ChildrenByParent = Map<string | null, XmlNode[]>;
 type AttrsByNode = Map<string, XmlAttribute[]>;
+type NodesById = Map<string, XmlNode>;
+
+interface NodeMeta {
+  children: XmlNode[];
+  inlineText: string | null;
+  showChildren: boolean;
+}
+
+type NodeMetaById = Map<string, NodeMeta>;
 
 const EMPTY_CHILDREN: XmlNode[] = [];
 const EMPTY_ATTRS: XmlAttribute[] = [];
@@ -16,30 +25,26 @@ interface TreeContextMenu {
   nodeId: string;
 }
 
-const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode, expandedIds, onToggleExpand, contextMenu, onContextMenu }: {
+const TreeNode = memo(function TreeNode({ node, nodeMetaById, attrsByNode, expandedIds, onToggleExpand, onContextMenu }: {
   node: XmlNode;
-  childrenByParent: ChildrenByParent;
+  nodeMetaById: NodeMetaById;
   attrsByNode: AttrsByNode;
   expandedIds: Set<string>;
   onToggleExpand: (id: string) => void;
-  contextMenu: TreeContextMenu | null;
   onContextMenu: (e: React.MouseEvent, nodeId: string) => void;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [editValue, setEditValue] = useState('');
-  const selectedNodeId = useAppStore((state) => state.selectedNodeId);
+  const isSelected = useAppStore((state) => state.selectedNodeId === node.id);
   const selectNode = useAppStore((state) => state.selectNode);
   const updateNodeLocal = useAppStore((state) => state.updateNodeLocal);
 
-  const children = childrenByParent.get(node.id) ?? EMPTY_CHILDREN;
+  const nodeMeta = nodeMetaById.get(node.id);
+  const children = nodeMeta?.children ?? EMPTY_CHILDREN;
   const nodeAttrs = attrsByNode.get(node.id) ?? EMPTY_ATTRS;
-  const hasChildren = children.length > 0;
   const expanded = expandedIds.has(node.id);
-
-  // Resolve inline text value
-  const textChildren = children.filter((c) => c.nodeType === 'text');
-  const elementChildren = children.filter((c) => c.nodeType === 'element');
-  const inlineText = textChildren.length === 1 && elementChildren.length === 0 ? textChildren[0].value : null;
+  const inlineText = nodeMeta?.inlineText ?? null;
+  const showChildren = nodeMeta?.showChildren ?? false;
 
   function handleDoubleClick(e: React.MouseEvent) {
     e.stopPropagation();
@@ -75,7 +80,7 @@ const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode, e
     return (
       <div className="tree-node">
         <div
-          className={`tree-node__row${node.id === selectedNodeId ? ' selected' : ''}`}
+          className={`tree-node__row${isSelected ? ' selected' : ''}`}
           onClick={() => selectNode(node.id)}
           onContextMenu={handleRightClick}
           data-node-id={node.id}
@@ -91,7 +96,7 @@ const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode, e
     return (
       <div className="tree-node">
         <div
-          className={`tree-node__row${node.id === selectedNodeId ? ' selected' : ''}`}
+          className={`tree-node__row${isSelected ? ' selected' : ''}`}
           onClick={() => selectNode(node.id)}
           onContextMenu={handleRightClick}
           data-node-id={node.id}
@@ -103,12 +108,10 @@ const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode, e
     );
   }
 
-  const showChildren = hasChildren && !inlineText;
-
   return (
     <div className="tree-node">
       <div
-        className={`tree-node__row${node.id === selectedNodeId ? ' selected' : ''}`}
+        className={`tree-node__row${isSelected ? ' selected' : ''}`}
         onClick={() => selectNode(node.id)}
         onContextMenu={handleRightClick}
         data-node-id={node.id}
@@ -150,11 +153,10 @@ const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode, e
             <TreeNode
               key={child.id}
               node={child}
-              childrenByParent={childrenByParent}
+              nodeMetaById={nodeMetaById}
               attrsByNode={attrsByNode}
               expandedIds={expandedIds}
               onToggleExpand={onToggleExpand}
-              contextMenu={contextMenu}
               onContextMenu={onContextMenu}
             />
           ))}
@@ -162,8 +164,7 @@ const TreeNode = memo(function TreeNode({ node, childrenByParent, attrsByNode, e
       )}
     </div>
   );
-}
-);
+});
 
 export function TreeView() {
   const nodes = useAppStore((s) => s.nodes);
@@ -178,6 +179,14 @@ export function TreeView() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<TreeContextMenu | null>(null);
   const [initialized, setInitialized] = useState(false);
+
+  const nodesById: NodesById = useMemo(() => {
+    const map: NodesById = new Map();
+    for (const node of nodes) {
+      map.set(node.id, node);
+    }
+    return map;
+  }, [nodes]);
 
   const childrenByParent: ChildrenByParent = useMemo(() => {
     const map: ChildrenByParent = new Map();
@@ -202,32 +211,60 @@ export function TreeView() {
     return map;
   }, [attributes]);
 
-  // Build a flat ordered list of visible node IDs for keyboard navigation
+  const nodeMetaById: NodeMetaById = useMemo(() => {
+    const map: NodeMetaById = new Map();
+    for (const [parentId, children] of childrenByParent) {
+      if (parentId === null) continue;
+
+      let firstTextValue: string | null = null;
+      let textCount = 0;
+      let elementCount = 0;
+
+      for (const child of children) {
+        if (child.nodeType === 'text') {
+          textCount += 1;
+          if (textCount === 1) {
+            firstTextValue = child.value;
+          }
+        } else if (child.nodeType === 'element') {
+          elementCount += 1;
+        }
+      }
+
+      const inlineText = textCount === 1 && elementCount === 0 ? firstTextValue : null;
+      map.set(parentId, {
+        children,
+        inlineText,
+        showChildren: children.length > 0 && inlineText === null,
+      });
+    }
+    return map;
+  }, [childrenByParent]);
+
   const flatNodeIds = useMemo(() => {
     const ids: string[] = [];
-    function walk(parentId: string | null) {
-      const children = childrenByParent.get(parentId) ?? [];
+
+    function walk(children: XmlNode[]) {
       for (const child of children) {
         ids.push(child.id);
-        const textChildren = (childrenByParent.get(child.id) ?? []).filter((c) => c.nodeType === 'text');
-        const elementChildren = (childrenByParent.get(child.id) ?? []).filter((c) => c.nodeType === 'element');
-        const inlineText = textChildren.length === 1 && elementChildren.length === 0;
-        const hasExpandableChildren = (childrenByParent.get(child.id) ?? []).length > 0 && !inlineText;
-        if (hasExpandableChildren && expandedIds.has(child.id)) {
-          walk(child.id);
+        const childMeta = nodeMetaById.get(child.id);
+        if (childMeta?.showChildren && expandedIds.has(child.id)) {
+          walk(childMeta.children);
         }
       }
     }
-    walk(null);
-    return ids;
-  }, [childrenByParent, expandedIds]);
 
-  // Initialize expand state: expand first two levels
+    walk(childrenByParent.get(null) ?? EMPTY_CHILDREN);
+    return ids;
+  }, [childrenByParent, expandedIds, nodeMetaById]);
+
   useEffect(() => {
     if (initialized || nodes.length === 0) return;
     const toExpand = new Set<string>();
-    for (const n of nodes) {
-      if (n.depth < 2 && n.nodeType === 'element') toExpand.add(n.id);
+    for (const node of nodes) {
+      if (node.depth < 2 && node.nodeType === 'element') {
+        toExpand.add(node.id);
+      }
     }
     setExpandedIds(toExpand);
     setInitialized(true);
@@ -244,8 +281,10 @@ export function TreeView() {
 
   const expandAll = useCallback(() => {
     const all = new Set<string>();
-    for (const n of nodes) {
-      if (n.nodeType === 'element') all.add(n.id);
+    for (const node of nodes) {
+      if (node.nodeType === 'element') {
+        all.add(node.id);
+      }
     }
     setExpandedIds(all);
   }, [nodes]);
@@ -254,31 +293,34 @@ export function TreeView() {
     setExpandedIds(new Set());
   }, []);
 
-  // ── Context menu actions ────────────────────────────────────────────────
+  const scrollToNode = useCallback((nodeId: string) => {
+    const el = treeRef.current?.querySelector(`[data-node-id="${nodeId}"]`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, nodeId: string) => {
     setContextMenu({ x: e.clientX, y: e.clientY, nodeId });
   }, []);
 
-  async function handleClone(nodeId: string) {
+  const handleClone = useCallback(async (nodeId: string) => {
     try {
       const newNodes = await invoke<XmlNode[]>('clone_node', { nodeId });
       addNodes(newNodes);
     } catch (e) {
       useAppStore.getState().setError(String(e));
     }
-  }
+  }, [addNodes]);
 
-  async function handleDelete(nodeId: string) {
+  const handleDelete = useCallback(async (nodeId: string) => {
     try {
       const deletedIds = await invoke<string[]>('delete_node', { nodeId });
       removeNodes(deletedIds);
     } catch (e) {
       useAppStore.getState().setError(String(e));
     }
-  }
+  }, [removeNodes]);
 
-  async function handleAddChild(nodeId: string) {
+  const handleAddChild = useCallback(async (nodeId: string) => {
     if (!document) return;
     try {
       const newNode = await invoke<XmlNode>('add_node', {
@@ -294,12 +336,14 @@ export function TreeView() {
     } catch (e) {
       useAppStore.getState().setError(String(e));
     }
-  }
+  }, [addNodes, document, selectNode]);
 
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!contextMenu) return [];
+
     const nodeId = contextMenu.nodeId;
-    const node = nodes.find((n) => n.id === nodeId);
+    const node = nodesById.get(nodeId);
+
     return [
       { label: 'Add Child', icon: '➕', onClick: () => handleAddChild(nodeId), disabled: node?.nodeType !== 'element' },
       { label: 'Clone', icon: '📋', shortcut: 'Ctrl+D', onClick: () => handleClone(nodeId) },
@@ -309,9 +353,7 @@ export function TreeView() {
       { label: 'separator', separator: true, onClick: () => {} },
       { label: 'Delete', icon: '🗑', shortcut: 'Del', danger: true, onClick: () => handleDelete(nodeId) },
     ];
-  }, [contextMenu, nodes, expandAll, collapseAll]);
-
-  // ── Keyboard navigation ─────────────────────────────────────────────────
+  }, [contextMenu, nodesById, handleAddChild, handleClone, expandAll, collapseAll, handleDelete]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -348,8 +390,7 @@ export function TreeView() {
             e.preventDefault();
             toggleExpand(selectedNodeId);
           } else if (selectedNodeId) {
-            // Navigate to parent
-            const node = nodes.find((n) => n.id === selectedNodeId);
+            const node = nodesById.get(selectedNodeId);
             if (node?.parentId) {
               e.preventDefault();
               selectNode(node.parentId);
@@ -370,12 +411,7 @@ export function TreeView() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [flatNodeIds, selectedNodeId, expandedIds, nodes, selectNode, toggleExpand]);
-
-  function scrollToNode(nodeId: string) {
-    const el = treeRef.current?.querySelector(`[data-node-id="${nodeId}"]`);
-    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
+  }, [flatNodeIds, selectedNodeId, expandedIds, nodesById, selectNode, scrollToNode, toggleExpand, handleDelete]);
 
   const roots = childrenByParent.get(null) ?? EMPTY_CHILDREN;
 
@@ -393,11 +429,10 @@ export function TreeView() {
         <TreeNode
           key={root.id}
           node={root}
-          childrenByParent={childrenByParent}
+          nodeMetaById={nodeMetaById}
           attrsByNode={attrsByNode}
           expandedIds={expandedIds}
           onToggleExpand={toggleExpand}
-          contextMenu={contextMenu}
           onContextMenu={handleContextMenu}
         />
       ))}

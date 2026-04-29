@@ -17,7 +17,7 @@ export function FilterBar() {
   const [localTag, setLocalTag] = useState(filter.tag);
   const [localAttribute, setLocalAttribute] = useState(filter.attribute);
   const [localValue, setLocalValue] = useState(filter.value);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     debounceRef.current = setTimeout(() => {

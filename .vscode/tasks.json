@@ -1,0 +1,38 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "AstraXML: Dev Launcher JSON Artifact",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				".\\scripts\\task-launcher-json.mjs"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"isBackground": true,
+			"problemMatcher": [
+				{
+					"owner": "astraxml-launcher",
+					"pattern": [
+						{
+							"regexp": "$^"
+						}
+					],
+					"background": {
+						"activeOnStart": true,
+						"endsPattern": "\"event\":\"startup_summary\""
+					}
+				}
+			],
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true,
+				"focus": false
+			},
+			"detail": "Runs the AstraXML launcher in JSON mode and writes NDJSON artifacts to astraxml/logs/tasks/."
+		}
+	]
+}

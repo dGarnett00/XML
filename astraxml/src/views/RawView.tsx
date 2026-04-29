@@ -1,14 +1,26 @@
-import { useEffect, useMemo, useRef, useState, memo } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useAppStore } from '../store/app';
 import { invoke } from '../lib/tauri';
 import './RawView.css';
+
+const RAW_HIGHLIGHT_CHAR_LIMIT = 200_000;
+const RAW_HIGHLIGHT_LINE_LIMIT = 4_000;
+
+const COMMENT_RE = /^(<!--[\s\S]*?-->)/;
+const TAG_RE = /^(<\/?[\w:.-]+)/;
+const ATTR_RE = /^(\s+)([\w:.-]+)(=)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/;
+const TAG_END_RE = /^(\s*\/?>)/;
+const CLOSE_TAG_RE = /^(<\/[\w:.-]+>)/;
+const DECL_RE = /^(<\?[\s\S]*?\?>)/;
+const TEXT_RE = /^([^<]+)/;
 
 export function RawView() {
   const document = useAppStore((s) => s.document);
   const nodes = useAppStore((s) => s.nodes);
   const [xml, setXml] = useState('');
   const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const deferredXml = useDeferredValue(xml);
 
   // Debounce serialization — wait 500ms after last node change
   useEffect(() => {
@@ -25,8 +37,15 @@ export function RawView() {
     return () => { cancelled = true; clearTimeout(debounceRef.current); };
   }, [document?.id, nodes]);
 
-  // Memoize highlighted output — only re-compute when xml string changes
-  const highlighted = useMemo(() => syntaxHighlight(xml), [xml]);
+  const plainTextMode = useMemo(() => {
+    const lineCount = countLines(deferredXml);
+    return deferredXml.length > RAW_HIGHLIGHT_CHAR_LIMIT || lineCount > RAW_HIGHLIGHT_LINE_LIMIT;
+  }, [deferredXml]);
+
+  const highlighted = useMemo(() => {
+    if (plainTextMode) return null;
+    return syntaxHighlight(deferredXml);
+  }, [deferredXml, plainTextMode]);
 
   if (!document) {
     return <div className="raw-view raw-view--empty"><p>No document open</p></div>;
@@ -35,9 +54,23 @@ export function RawView() {
   return (
     <div className="raw-view">
       {loading && <div className="raw-view__loading">Serializing…</div>}
-      <pre className="raw-view__content">{highlighted}</pre>
+      {plainTextMode && deferredXml && (
+        <div className="raw-view__loading">Syntax highlighting paused for large XML to keep the editor responsive.</div>
+      )}
+      <pre className="raw-view__content">{plainTextMode ? deferredXml : highlighted}</pre>
     </div>
   );
+}
+
+function countLines(text: string) {
+  if (!text) return 0;
+  let lines = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) === 10) {
+      lines += 1;
+    }
+  }
+  return lines;
 }
 
 function syntaxHighlight(xml: string) {
@@ -59,7 +92,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
 
   while (remaining.length > 0) {
     // Comment
-    const commentMatch = remaining.match(/^(<!--[\s\S]*?-->)/);
+    const commentMatch = remaining.match(COMMENT_RE);
     if (commentMatch) {
       parts.push(<span key={key++} className="raw-hl--comment">{commentMatch[1]}</span>);
       remaining = remaining.slice(commentMatch[1].length);
@@ -67,7 +100,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
     }
 
     // Tag (opening/closing/self-closing)
-    const tagMatch = remaining.match(/^(<\/?[\w:.-]+)/);
+    const tagMatch = remaining.match(TAG_RE);
     if (tagMatch) {
       parts.push(<span key={key++} className="raw-hl--tag">{tagMatch[1]}</span>);
       remaining = remaining.slice(tagMatch[1].length);
@@ -75,7 +108,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
       // Parse attributes inside the tag
       while (remaining.length > 0) {
         // Attribute
-        const attrMatch = remaining.match(/^(\s+)([\w:.-]+)(=)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/);
+        const attrMatch = remaining.match(ATTR_RE);
         if (attrMatch) {
           parts.push(<span key={key++}>{attrMatch[1]}</span>);
           parts.push(<span key={key++} className="raw-hl--attr">{attrMatch[2]}</span>);
@@ -85,7 +118,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
           continue;
         }
         // End of tag
-        const endMatch = remaining.match(/^(\s*\/?>)/);
+        const endMatch = remaining.match(TAG_END_RE);
         if (endMatch) {
           parts.push(<span key={key++} className="raw-hl--tag">{endMatch[1]}</span>);
           remaining = remaining.slice(endMatch[1].length);
@@ -99,7 +132,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
     }
 
     // Closing bracket for end tags
-    const closeMatch = remaining.match(/^(<\/[\w:.-]+>)/);
+    const closeMatch = remaining.match(CLOSE_TAG_RE);
     if (closeMatch) {
       parts.push(<span key={key++} className="raw-hl--tag">{closeMatch[1]}</span>);
       remaining = remaining.slice(closeMatch[1].length);
@@ -107,7 +140,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
     }
 
     // XML declaration
-    const declMatch = remaining.match(/^(<\?[\s\S]*?\?>)/);
+    const declMatch = remaining.match(DECL_RE);
     if (declMatch) {
       parts.push(<span key={key++} className="raw-hl--decl">{declMatch[1]}</span>);
       remaining = remaining.slice(declMatch[1].length);
@@ -115,7 +148,7 @@ const HighlightedLine = memo(function HighlightedLine({ text }: { text: string }
     }
 
     // Plain text
-    const textMatch = remaining.match(/^([^<]+)/);
+    const textMatch = remaining.match(TEXT_RE);
     if (textMatch) {
       parts.push(<span key={key++} className="raw-hl--text">{textMatch[1]}</span>);
       remaining = remaining.slice(textMatch[1].length);

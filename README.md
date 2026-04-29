@@ -56,6 +56,10 @@ scripts\run.bat
 bash scripts/run.sh
 ```
 
+The launcher now emits structured startup phases, supports `--json` NDJSON output for CI/tasks, prints a compact startup timing summary when the desktop app launches, and writes full raw dev-session logs to `astraxml/logs/dev/`.
+
+If you are working in VS Code, you can also run the task `AstraXML: Dev Launcher JSON Artifact`, which writes machine-readable NDJSON artifacts to `astraxml/logs/tasks/`.
+
 ### Manual
 
 ```bash

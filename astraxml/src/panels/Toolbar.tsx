@@ -30,7 +30,7 @@ export function Toolbar() {
   const searchQuery = useAppStore((s) => s.searchQuery);
   const setSearchQuery = useAppStore((s) => s.setSearchQuery);
   const [localSearch, setLocalSearch] = useState(searchQuery);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
 
   // Bulk edit state

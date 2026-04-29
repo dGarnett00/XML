@@ -7,7 +7,8 @@ pub fn serialize(
     attributes: &[Attribute],
     root_id: &str,
 ) -> String {
-    let mut out = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>"#);
+    let mut out = String::with_capacity((nodes.len() * 32) + (attributes.len() * 24) + 64);
+    out.push_str(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>"#);
     out.push('\n');
 
     // Build lookup maps
@@ -57,19 +58,17 @@ fn write_node(
         None => return,
     };
 
-    let pad = "    ".repeat(indent);
-
     match node.node_type {
         NodeType::Text => {
             if let Some(v) = &node.value {
-                out.push_str(&pad);
-                out.push_str(&escape_xml(v));
+                push_indent(out, indent);
+                push_escaped_xml(out, v);
                 out.push('\n');
             }
         }
         NodeType::Comment => {
             if let Some(v) = &node.value {
-                out.push_str(&pad);
+                push_indent(out, indent);
                 out.push_str("<!--");
                 out.push_str(v);
                 out.push_str("-->\n");
@@ -79,39 +78,31 @@ fn write_node(
             let child_nodes = children.get(&Some(node_id));
             let attrs = attrs_by_node.get(node_id);
 
-            // Build attribute string
-            let attr_str = attrs.map_or(String::new(), |list| {
-                list.iter()
-                    .map(|a| format!(r#" {}="{}""#, a.name, escape_xml(&a.value)))
-                    .collect::<Vec<_>>()
-                    .join("")
-            });
-
             if child_nodes.is_none_or(|c| c.is_empty()) {
-                out.push_str(&pad);
+                push_indent(out, indent);
                 out.push('<');
                 out.push_str(&node.name);
-                out.push_str(&attr_str);
+                write_attrs(out, attrs);
                 out.push_str("/>\n");
             } else {
                 let kids = child_nodes.unwrap();
 
                 if kids.len() == 1 && kids[0].node_type == NodeType::Text {
                     let text_value = kids[0].value.as_deref().unwrap_or("");
-                    out.push_str(&pad);
+                    push_indent(out, indent);
                     out.push('<');
                     out.push_str(&node.name);
-                    out.push_str(&attr_str);
+                    write_attrs(out, attrs);
                     out.push('>');
-                    out.push_str(&escape_xml(text_value));
+                    push_escaped_xml(out, text_value);
                     out.push_str("</");
                     out.push_str(&node.name);
                     out.push_str(">\n");
                 } else {
-                    out.push_str(&pad);
+                    push_indent(out, indent);
                     out.push('<');
                     out.push_str(&node.name);
-                    out.push_str(&attr_str);
+                    write_attrs(out, attrs);
                     out.push_str(">\n");
                     for kid in kids {
                         write_node(
@@ -123,7 +114,7 @@ fn write_node(
                             out,
                         );
                     }
-                    out.push_str(&pad);
+                    push_indent(out, indent);
                     out.push_str("</");
                     out.push_str(&node.name);
                     out.push_str(">\n");
@@ -133,17 +124,33 @@ fn write_node(
     }
 }
 
-fn escape_xml(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&'  => out.push_str("&amp;"),
-            '<'  => out.push_str("&lt;"),
-            '>'  => out.push_str("&gt;"),
-            '"'  => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _    => out.push(c),
+fn write_attrs(out: &mut String, attrs: Option<&Vec<&Attribute>>) {
+    if let Some(list) = attrs {
+        for attr in list {
+            out.push(' ');
+            out.push_str(&attr.name);
+            out.push_str("=\"");
+            push_escaped_xml(out, &attr.value);
+            out.push('"');
         }
     }
-    out
+}
+
+fn push_indent(out: &mut String, indent: usize) {
+    for _ in 0..indent {
+        out.push_str("    ");
+    }
+}
+
+fn push_escaped_xml(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
 }

@@ -9,16 +9,21 @@ import './TableView.css';
 interface GroupRow {
   node: XmlNode;
   nameAttr: string;
+  nameAttrObj: XmlAttribute | null;
+  otherAttrs: XmlAttribute[];
   attrs: XmlAttribute[];
   children: ChildRow[];
   textValue: string;
   childValueMap: Map<string, string>; // child element name → text value
+  attributeSearchText: string[];
+  valueSearchText: string;
 }
 
 interface ChildRow {
   node: XmlNode;
   attrs: XmlAttribute[];
   textValue: string;
+  textNodeId: string | null;
 }
 
 type SortKey = 'index' | 'element' | 'name' | 'children' | string; // string for dynamic child-value columns
@@ -104,8 +109,7 @@ const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMu
 }) {
   const updateNodeLocal = useAppStore((s) => s.updateNodeLocal);
   const updateAttributeLocal = useAppStore((s) => s.updateAttributeLocal);
-  const otherAttrs = group.attrs.filter((a) => a.name !== 'name');
-  const nameAttrObj = group.attrs.find((a) => a.name === 'name');
+  const nameAttrObj = group.nameAttrObj;
 
   async function handleNameEdit(newName: string) {
     try {
@@ -160,10 +164,9 @@ const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMu
                   await invoke('set_child_value', { parentId: group.node.id, childName: col, childValue: newVal });
                   // Update local text child node
                   const store = useAppStore.getState();
-                  const childNode = store.nodes.find((n) => n.parentId === group.node.id && n.name === col && n.nodeType === 'element');
-                  if (childNode) {
-                    const textChild = store.nodes.find((n) => n.parentId === childNode.id && n.nodeType === 'text');
-                    if (textChild) store.updateNodeLocal(textChild.id, { value: newVal });
+                  const childRow = group.children.find((child) => child.node.name === col);
+                  if (childRow?.textNodeId) {
+                    store.updateNodeLocal(childRow.textNodeId, { value: newVal });
                   }
                 } catch (e) {
                   useAppStore.getState().setError(String(e));
@@ -179,7 +182,7 @@ const GroupRowView = memo(function GroupRowView({ group, index, isSelected, isMu
         <span className="tv__count-badge">{group.children.length}</span>
       </td>
       <td className="tv__cell tv__cell--attrs">
-        {otherAttrs.map((a) => (
+        {group.otherAttrs.map((a) => (
           <span key={a.id} className="tv__attr-badge" title={`${a.name}="${a.value}"`}>
             {a.name}=<span className="tv__attr-badge-val">{a.value}</span>
           </span>
@@ -199,7 +202,6 @@ const ChildRowView = memo(function ChildRowView({ child, isSelected, onSelect, c
   childColumns: string[];
   highlight: string;
 }) {
-  const nodes = useAppStore((s) => s.nodes);
   const updateNodeLocal = useAppStore((s) => s.updateNodeLocal);
 
   async function handleValueEdit(newValue: string) {
@@ -207,8 +209,7 @@ const ChildRowView = memo(function ChildRowView({ child, isSelected, onSelect, c
       const parentNode = child.node;
       if (!parentNode.parentId) return;
       await invoke('set_child_value', { parentId: parentNode.parentId, childName: parentNode.name, childValue: newValue });
-      const textChild = nodes.find((n) => n.parentId === parentNode.id && n.nodeType === 'text');
-      if (textChild) updateNodeLocal(textChild.id, { value: newValue });
+      if (child.textNodeId) updateNodeLocal(child.textNodeId, { value: newValue });
     } catch (e) {
       useAppStore.getState().setError(String(e));
     }
@@ -311,6 +312,16 @@ export function TableView() {
     return map;
   }, [nodes]);
 
+  const textNodeIdByParent = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const node of nodes) {
+      if (node.parentId && node.nodeType === 'text' && !map.has(node.parentId)) {
+        map.set(node.parentId, node.id);
+      }
+    }
+    return map;
+  }, [nodes]);
+
   const childrenByParent = useMemo(() => {
     const map = new Map<string, XmlNode[]>();
     for (const n of nodes) {
@@ -336,26 +347,33 @@ export function TableView() {
     return topLevelElements.map((node) => {
       const attrs = attrsByNode.get(node.id) ?? [];
       const nameAttrObj = attrs.find((a) => a.name === 'name');
+      const otherAttrs = attrs.filter((a) => a.name !== 'name');
       const kids = childrenByParent.get(node.id) ?? [];
       const childRows: ChildRow[] = kids.map((kid) => ({
         node: kid,
         attrs: attrsByNode.get(kid.id) ?? [],
         textValue: textValueByParent.get(kid.id) ?? '',
+        textNodeId: textNodeIdByParent.get(kid.id) ?? null,
       }));
       const childValueMap = new Map<string, string>();
       for (const cr of childRows) {
         if (cr.textValue) childValueMap.set(cr.node.name, cr.textValue);
       }
+      const textValue = textValueByParent.get(node.id) ?? '';
       return {
         node,
         nameAttr: nameAttrObj?.value ?? '',
+        nameAttrObj: nameAttrObj ?? null,
+        otherAttrs,
         attrs,
         children: childRows,
-        textValue: textValueByParent.get(node.id) ?? '',
+        textValue,
         childValueMap,
+        attributeSearchText: attrs.map((attr) => `${attr.name}=${attr.value}`.toLowerCase()),
+        valueSearchText: [textValue, ...childRows.map((child) => child.textValue)].join(' ').toLowerCase(),
       };
     });
-  }, [rootNode, childrenByParent, attrsByNode, textValueByParent]);
+  }, [rootNode, childrenByParent, attrsByNode, textValueByParent, textNodeIdByParent]);
 
   // ── Auto-detect common child element columns ───────────────────────────
 
@@ -382,34 +400,37 @@ export function TableView() {
   // ── Filter ──────────────────────────────────────────────────────────────
 
   const filtered = useMemo(() => {
+    const tagTerm = filter.tag.toLowerCase();
+    const attributeTerm = filter.attribute.toLowerCase();
+    const valueTerm = filter.value.toLowerCase();
+    const tagRegex = filter.mode === 'regex' && filter.tag ? safeRegex(filter.tag, 'i') : null;
+    const attributeRegex = filter.mode === 'regex' && filter.attribute ? safeRegex(filter.attribute, 'i') : null;
+    const valueRegex = filter.mode === 'regex' && filter.value ? safeRegex(filter.value, 'i') : null;
+
     return groups.filter((g) => {
       if (filter.tag) {
         const match = filter.mode === 'equals'
           ? g.node.name === filter.tag
           : filter.mode === 'regex'
-            ? (safeRegex(filter.tag, 'i')?.test(g.node.name) ?? false)
-            : g.node.name.toLowerCase().includes(filter.tag.toLowerCase());
+            ? (tagRegex?.test(g.node.name) ?? false)
+            : g.node.name.toLowerCase().includes(tagTerm);
         if (!match) return false;
       }
       if (filter.attribute) {
-        const term = filter.attribute.toLowerCase();
-        const hasMatch = g.attrs.some((a) => {
-          const combined = `${a.name}=${a.value}`.toLowerCase();
-          return filter.mode === 'equals'
-            ? a.value === filter.attribute || a.name === filter.attribute
-            : filter.mode === 'regex'
-              ? (safeRegex(filter.attribute, 'i')?.test(combined) ?? false)
-              : combined.includes(term);
-        }) || g.nameAttr.toLowerCase().includes(term);
+        const nameAttrMatch = g.nameAttr.toLowerCase().includes(attributeTerm);
+        const hasMatch = filter.mode === 'equals'
+          ? g.attrs.some((a) => a.value === filter.attribute || a.name === filter.attribute) || nameAttrMatch
+          : filter.mode === 'regex'
+            ? g.attributeSearchText.some((combined) => attributeRegex?.test(combined) ?? false) || nameAttrMatch
+            : g.attributeSearchText.some((combined) => combined.includes(attributeTerm)) || nameAttrMatch;
         if (!hasMatch) return false;
       }
       if (filter.value) {
-        const allText = [g.textValue, ...g.children.map((c) => c.textValue)].join(' ').toLowerCase();
         const match = filter.mode === 'equals'
           ? g.children.some((c) => c.textValue === filter.value) || g.textValue === filter.value
           : filter.mode === 'regex'
-            ? (safeRegex(filter.value, 'i')?.test(allText) ?? false)
-            : allText.includes(filter.value.toLowerCase());
+            ? (valueRegex?.test(g.valueSearchText) ?? false)
+            : g.valueSearchText.includes(valueTerm);
         if (!match) return false;
       }
       return true;

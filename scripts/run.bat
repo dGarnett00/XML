@@ -1,17 +1,14 @@
 @echo off
-title AstraXML – Dev Launcher
-echo Starting AstraXML...
+setlocal
+title AstraXML - Dev Launcher
+echo Starting AstraXML structured launcher...
 
-where npm >nul 2>&1
+where node >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: npm not found. Please install Node.js from https://nodejs.org
+    echo ERROR: node not found. Please install Node.js from https://nodejs.org
     pause
     exit /b 1
 )
 
-cd /d "%~dp0..\astraxml"
-echo Installing dependencies...
-call npm install
-echo Launching app...
-call npm run tauri dev
+call node "%~dp0dev-launcher.mjs" %*
 pause
