@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   createWriteStream,
@@ -18,6 +18,11 @@ const appRoot = join(repoRoot, 'astraxml');
 const logsRoot = join(appRoot, 'logs');
 const devLogsRoot = join(logsRoot, 'dev');
 const statePath = join(logsRoot, 'launcher-state.json');
+const cargoRoot = join(appRoot, 'src-tauri');
+
+// Toolchain version results are cached for this many milliseconds to avoid
+// re-spawning npm/cargo/rustc --version on every rapid relaunch.
+const TOOLCHAIN_CACHE_TTL_MS = 60_000;
 
 const args = new Set(process.argv.slice(2));
 const options = {
@@ -25,6 +30,7 @@ const options = {
   verbose: args.has('--verbose') || process.env.ASTRAXML_LAUNCHER_VERBOSE === '1',
   forceInstall: args.has('--force-install'),
   json: args.has('--json') || process.env.ASTRAXML_LAUNCHER_JSON === '1',
+  skipCargoCheck: args.has('--skip-cargo-check'),
   help: args.has('--help') || args.has('-h'),
 };
 
@@ -69,23 +75,60 @@ async function main() {
     throw new Error(`Could not find package.json in ${appRoot}`);
   }
 
-  const toolchain = collectToolchain();
+  // Load state early — needed for toolchain TTL cache and startup prediction.
+  const state = readState();
+
+  // Parallel pre-initialization: detect toolchain (async, cached) while computing
+  // manifest fingerprints (sync but overlapped with the async I/O wait).
+  const [toolchain, npmFingerprint] = await Promise.all([
+    collectToolchainAsync(state),
+    Promise.resolve(computeFingerprint(manifests)),
+  ]);
+
+  // Cargo manifest fingerprint — sync, runs after the async work above.
+  const cargoFingerprint = computeCargoFingerprint();
+
   log('INFO', 'Workspace', appRoot, {
     event: 'workspace_detected',
     data: { repoRoot, appRoot },
   });
-  log('OK', 'Toolchain', `Node ${toolchain.node} | npm ${normalizeVersionText(toolchain.npm, 'npm')} | cargo ${normalizeVersionText(toolchain.cargo, 'cargo')} | rustc ${normalizeVersionText(toolchain.rustc, 'rustc')}` , {
+
+  const toolchainSuffix = toolchain.fromCache ? ' (cached)' : '';
+  log('OK', 'Toolchain', `Node ${toolchain.node} | npm ${normalizeVersionText(toolchain.npm, 'npm')} | cargo ${normalizeVersionText(toolchain.cargo, 'cargo')} | rustc ${normalizeVersionText(toolchain.rustc, 'rustc')}${toolchainSuffix}`, {
     event: 'toolchain_detected',
-    data: toolchain,
+    data: { node: toolchain.node, npm: toolchain.npm, cargo: toolchain.cargo, rustc: toolchain.rustc, fromCache: toolchain.fromCache },
   });
+
   log('INFO', 'Session', `Raw output is being captured in ${sessionLogPath}`, {
     event: 'session_log_ready',
     data: { sessionId, sessionLogPath },
   });
 
-  const state = readState();
-  const fingerprint = computeFingerprint(manifests);
-  const shouldInstall = options.forceInstall || !dependenciesAreCurrent(state, fingerprint);
+  // Rust manifest change detection — gives an early compile-time prediction.
+  const rustSourceChanged = cargoFingerprint != null
+    && state?.cargoFingerprint?.hash !== cargoFingerprint.hash;
+  if (cargoFingerprint) {
+    if (rustSourceChanged && state?.cargoFingerprint) {
+      log('INFO', 'Backend', 'Rust manifests changed since last run; full recompile is likely.', {
+        event: 'rust_source_changed',
+        data: { previous: state.cargoFingerprint.hash, current: cargoFingerprint.hash },
+      });
+    } else if (!rustSourceChanged) {
+      log('INFO', 'Backend', 'Rust manifests unchanged; incremental build expected to be fast.', {
+        event: 'rust_source_unchanged',
+      });
+    }
+  }
+
+  // Startup time prediction based on the most recent successful run.
+  if (state?.lastStartupMs) {
+    log('INFO', 'Prediction', `Last startup completed in ${formatDuration(state.lastStartupMs)}; expecting similar this run.`, {
+      event: 'startup_prediction',
+      data: { lastStartupMs: state.lastStartupMs },
+    });
+  }
+
+  const shouldInstall = options.forceInstall || !dependenciesAreCurrent(state, npmFingerprint);
 
   if (options.dryRun) {
     log('STEP', 'DryRun', shouldInstall ? 'npm install would run before launch.' : 'Dependencies are current; npm install would be skipped.', {
@@ -105,19 +148,51 @@ async function main() {
     return;
   }
 
+  // Persist updated toolchain cache and cargo fingerprint for the next launch.
+  writeState({
+    toolchainCache: {
+      node: toolchain.node,
+      npm: toolchain.npm,
+      cargo: toolchain.cargo,
+      rustc: toolchain.rustc,
+      cachedAtMs: toolchain.cachedAtMs,
+    },
+    cargoFingerprint: cargoFingerprint ?? state?.cargoFingerprint ?? null,
+  });
+
   if (shouldInstall) {
-    await runDependencyInstall(toolchain, fingerprint);
+    if (!options.skipCargoCheck && rustSourceChanged) {
+      // Rust source changed AND npm install is needed — run both concurrently.
+      log('STEP', 'Pre-flight', 'Running npm install and cargo check in parallel...', {
+        event: 'preflight_parallel_start',
+      });
+      const [, cargoCheckResult] = await Promise.all([
+        runDependencyInstall(toolchain, npmFingerprint),
+        runCargoCheckAsync(),
+      ]);
+      logCargoCheckResult(cargoCheckResult);
+    } else {
+      await runDependencyInstall(toolchain, npmFingerprint);
+    }
   } else {
     startupState.dependencies.status = 'skipped';
-    log('OK', 'Dependencies', `Current manifests unchanged (${fingerprint.label}); skipping npm install.`, {
+    log('OK', 'Dependencies', `Current manifests unchanged (${npmFingerprint.label}); skipping npm install.`, {
       event: 'dependency_install_skipped',
       data: {
-        fingerprint: fingerprint.hash,
-        fingerprintLabel: fingerprint.label,
+        fingerprint: npmFingerprint.hash,
+        fingerprintLabel: npmFingerprint.label,
       },
     });
     if (state?.installSummary) {
       emitInstallSummary(state.installSummary, true);
+    }
+    // Rust source changed but npm install is not needed — run cargo check alone.
+    if (!options.skipCargoCheck && rustSourceChanged) {
+      log('STEP', 'Pre-flight', 'Running cargo check (Rust source changed)...', {
+        event: 'preflight_cargo_check_start',
+      });
+      const cargoCheckResult = await runCargoCheckAsync();
+      logCargoCheckResult(cargoCheckResult);
     }
   }
 
@@ -133,13 +208,14 @@ function printHelp() {
     'AstraXML structured dev launcher',
     '',
     'Usage:',
-    '  node scripts/dev-launcher.mjs [--dry-run] [--verbose] [--force-install] [--json]',
+    '  node scripts/dev-launcher.mjs [--dry-run] [--verbose] [--force-install] [--json] [--skip-cargo-check]',
     '',
     'Flags:',
-    '  --dry-run        Validate toolchain and manifest state without starting Tauri.',
-    '  --verbose        Stream raw child-process lines to the console as well as the session log.',
-    '  --force-install  Run npm install even when manifests are unchanged.',
-    '  --json           Emit newline-delimited JSON events for CI/tasks and diagnostics.',
+    '  --dry-run           Validate toolchain and manifest state without starting Tauri.',
+    '  --verbose           Stream raw child-process lines to the console as well as the session log.',
+    '  --force-install     Run npm install even when manifests are unchanged.',
+    '  --json              Emit newline-delimited JSON events for CI/tasks and diagnostics.',
+    '  --skip-cargo-check  Skip the parallel cargo check pre-flight step.',
   ];
 
   for (const line of lines) {
@@ -157,10 +233,51 @@ function collectManifestFiles() {
   return manifests;
 }
 
-function collectToolchain() {
-  const npm = getCommandVersion('npm');
-  const cargo = getCommandVersion('cargo');
-  const rustc = getCommandVersion('rustc');
+// ---------------------------------------------------------------------------
+// Async parallel toolchain detection with TTL-based caching
+// ---------------------------------------------------------------------------
+
+async function getCommandVersionAsync(commandName) {
+  const invocation = buildCommandInvocation(commandName, ['--version']);
+  return new Promise((resolve) => {
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: appRoot,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    let output = '';
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => { output += chunk; });
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => { output += chunk; });
+    }
+
+    child.once('exit', () => resolve(output.trim().split(/\r?\n/, 1)[0] ?? null));
+    child.once('error', () => resolve(null));
+  });
+}
+
+async function collectToolchainAsync(state) {
+  const cache = state?.toolchainCache;
+  const cacheValid = cache
+    && typeof cache.cachedAtMs === 'number'
+    && (Date.now() - cache.cachedAtMs) < TOOLCHAIN_CACHE_TTL_MS;
+
+  if (cacheValid) {
+    return { ...cache, fromCache: true };
+  }
+
+  // Spawn all three version checks concurrently — no sequential blocking.
+  const [npm, cargo, rustc] = await Promise.all([
+    getCommandVersionAsync('npm'),
+    getCommandVersionAsync('cargo'),
+    getCommandVersionAsync('rustc'),
+  ]);
 
   const missing = [];
   if (!npm) missing.push('npm');
@@ -176,23 +293,84 @@ function collectToolchain() {
     npm,
     cargo,
     rustc,
+    cachedAtMs: Date.now(),
+    fromCache: false,
   };
 }
 
-function getCommandVersion(commandName) {
-  const invocation = buildCommandInvocation(commandName, ['--version']);
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd: appRoot,
-    encoding: 'utf8',
-    shell: false,
-  });
+// ---------------------------------------------------------------------------
+// Cargo manifest fingerprinting
+// ---------------------------------------------------------------------------
 
-  if (result.error || result.status !== 0) {
+function computeCargoFingerprint() {
+  const cargoTomlPath = join(cargoRoot, 'Cargo.toml');
+  const cargoLockPath = join(cargoRoot, 'Cargo.lock');
+  const paths = [cargoTomlPath, cargoLockPath].filter(existsSync);
+  if (paths.length === 0) {
     return null;
   }
+  return computeFingerprint(paths);
+}
 
-  const text = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
-  return text.split(/\r?\n/, 1)[0] ?? null;
+// ---------------------------------------------------------------------------
+// Pre-flight cargo check (runs concurrently with npm install when needed)
+// ---------------------------------------------------------------------------
+
+async function runCargoCheckAsync() {
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn('cargo', ['check', '--quiet'], {
+      cwd: cargoRoot,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    let output = '';
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => { output += chunk; });
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => { output += chunk; });
+    }
+
+    child.once('exit', (code) => {
+      resolve({
+        passed: code === 0,
+        exitCode: code ?? 1,
+        durationMs: Date.now() - startedAt,
+        output: output.trim(),
+      });
+    });
+
+    child.once('error', (err) => {
+      resolve({
+        passed: false,
+        exitCode: 1,
+        durationMs: Date.now() - startedAt,
+        output: err.message,
+      });
+    });
+  });
+}
+
+function logCargoCheckResult(result) {
+  if (result.passed) {
+    log('OK', 'Pre-flight', `cargo check passed in ${formatDuration(result.durationMs)}.`, {
+      event: 'cargo_check_passed',
+      data: { durationMs: result.durationMs },
+    });
+  } else {
+    log('ERR', 'Pre-flight', `cargo check failed (exit ${result.exitCode}) in ${formatDuration(result.durationMs)}. Tauri dev build will likely fail.`, {
+      event: 'cargo_check_failed',
+      data: { exitCode: result.exitCode, durationMs: result.durationMs },
+    });
+    if (result.output) {
+      printTail(result.output);
+    }
+  }
 }
 
 function resolveCommand(commandName) {
@@ -286,7 +464,10 @@ function readState() {
 
 function writeState(payload) {
   ensureDir(logsRoot);
-  writeFileSync(statePath, JSON.stringify(payload, null, 2), 'utf8');
+  // Merge into existing state so independent phases can each write their own
+  // fields without clobbering fields written by other phases.
+  const existing = readState() ?? {};
+  writeFileSync(statePath, JSON.stringify({ ...existing, ...payload }, null, 2), 'utf8');
 }
 
 async function runDependencyInstall(toolchain, fingerprint) {
@@ -894,6 +1075,9 @@ function emitStartupSummaryIfReady() {
       sessionLogPath,
     },
   });
+
+  // Persist the total startup time so the next launch can predict duration.
+  writeState({ lastStartupMs: totalMs });
 
   startupState.summaryEmitted = true;
 }

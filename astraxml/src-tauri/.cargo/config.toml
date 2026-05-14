@@ -1,5 +1,12 @@
 [target.x86_64-pc-windows-msvc]
-linker = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe"
+# lld-link is LLVM's linker — ~3-5x faster than MSVC link.exe for Rust dev builds.
+# lld-link.exe lives at ~/.cargo/bin/lld-link.exe (copied from rustup's llvm-tools).
+linker = "lld-link"
+rustflags = [
+  "-C", "link-arg=/DEBUG:FASTLINK",   # emit minimal PDB (fast) instead of full PDB
+  "-C", "link-arg=/OPT:NOREF",        # skip dead-code elimination in debug (faster link)
+  "-C", "link-arg=/OPT:NOICF",        # skip ICF in debug (faster link)
+]
 
 [env]
 LIB = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\um\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\ucrt\\x64"
